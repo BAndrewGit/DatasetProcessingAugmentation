@@ -8,10 +8,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, ConfusionMatrixDisplay, silhouette_score
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from sklearn.exceptions import NotFittedError
-import sys
 import json
-
+pd.set_option('future.no_silent_downcasting', True)
 # Configurare parametri
 CONFIG = {
     'required_columns': [
@@ -24,7 +22,9 @@ CONFIG = {
     'risk_weights': [0.3, 0.25, 0.35, 0.1],
     'test_size': 0.25,
     'kmeans_clusters': 3,
-    'dynamic_threshold': 'median'  # 'mean', 'quantile' sau valoare fixă
+    'dynamic_threshold': 'median',  # 'mean', 'quantile' sau valoare fixă
+    'min_samples_cluster': 10,
+    'max_na_percentage': 0.2
 }
 
 
@@ -55,59 +55,6 @@ def load_data():
         return None
 
 
-def preprocess_data(df):
-    """Preprocesare avansată a datelor"""
-    try:
-        # 1. Transformare Age
-        def parse_age(age_str):
-            if pd.isna(age_str):
-                return np.nan
-            if '-' in age_str:
-                parts = list(map(int, age_str.split('-')))
-                return np.mean(parts)
-            elif age_str.startswith('>'):
-                return int(age_str[1:]) + 5
-            elif age_str.startswith('<'):
-                return int(age_str[1:]) - 5
-            else:
-                return float(age_str) if age_str.replace('.', '', 1).isdigit() else np.nan
-
-        df['Age'] = df['Age'].apply(parse_age)
-
-        # 2. Essential_Needs_Percentage
-        df['Essential_Needs_Percentage'] = pd.to_numeric(
-            df['Essential_Needs_Percentage'].astype(str).str.replace('[^0-9.]', '', regex=True),
-            errors='coerce'
-        )
-
-        # 3. Debt_Level cu gestionare NaN
-        debt_mapping = {
-            'Difficult to manage': 3,
-            'Manageable': 2,
-            'Low': 1,
-            np.nan: 0,
-            'Unknown': 0
-        }
-        df['Debt_Level'] = df['Debt_Level'].replace(debt_mapping).fillna(0).astype(int)
-
-        # 4. Alte coloane numerice
-        numeric_cols = ['Expense_Distribution_Entertainment', 'Savings_Goal_Emergency_Fund']
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        # Imputare valori lipsă
-        df['Age'] = df['Age'].fillna(df['Age'].median())
-        df['Essential_Needs_Percentage'] = df['Essential_Needs_Percentage'].fillna(
-            df['Essential_Needs_Percentage'].median()
-        )
-
-        return df
-
-    except Exception as e:
-        print(f"Eroare la preprocesare: {str(e)}")
-        return None
-
-
 def calculate_risk_score(df):
     """Calculează scorul de risc și etichetele"""
     try:
@@ -120,6 +67,11 @@ def calculate_risk_score(df):
         ]
 
         df['Risk_Score'] = np.sum(conditions, axis=0)
+
+        # Verificare scoruri unice
+        if df['Risk_Score'].nunique() == 1:
+            print("\nToate scorurile de risc sunt identice! Ajustați ponderile.")
+            return None
 
         # Determinare prag dinamic
         if isinstance(CONFIG['dynamic_threshold'], (int, float)):
@@ -147,19 +99,10 @@ def calculate_risk_score(df):
 
 
 def train_models(df):
-    """Antrenează modelele de ML"""
     try:
-        X = df[['Essential_Needs_Percentage',
-                'Expense_Distribution_Entertainment',
-                'Debt_Level']]
+        # Folosește toate coloanele, cu excepția variabilei țintă
+        X = df.drop(columns=['Behavior_Risk_Level'])  # Exclude doar coloana țintă
         y = df['Behavior_Risk_Level']
-
-        # Verificare clase
-        unique_classes = y.unique()
-        if len(unique_classes) == 1:
-            print("\nATENȚIE: Toate instanțele sunt de același tip!")
-            print("Nu se poate antrena modelul. Verificați calculul riscului.")
-            return None, None
 
         # Împărțire date
         X_train, X_test, y_train, y_test = train_test_split(
@@ -191,11 +134,171 @@ def train_models(df):
         plt.title('Matrice de confuzie')
         plt.show()
 
-        return logreg, y_test
+        # Analiza importanței caracteristicilor
+        feature_importance = pd.DataFrame({
+            'Feature': X.columns,
+            'Coefficient': logreg.coef_[0]
+        })
+        print("\nImportanța caracteristicilor:")
+        print(feature_importance.sort_values(by='Coefficient', ascending=False))
+
+        return logreg, y_test, y_pred
 
     except Exception as e:
         print(f"Eroare la antrenare modele: {str(e)}")
-        return None, None
+        return None, None, None
+
+
+def preprocess_data(df):
+    """Preprocesare avansată a tuturor coloanelor"""
+    try:
+        # 1. Procesare coloană Age
+        def parse_age(age_str):
+            if pd.isna(age_str):
+                return np.nan
+            age_str = str(age_str)
+            if '-' in age_str:
+                parts = list(map(int, age_str.split('-')))
+                return np.mean(parts)
+            elif age_str.startswith('>'):
+                return int(age_str[1:]) + 5
+            elif age_str.startswith('<'):
+                return int(age_str[1:]) - 5
+            else:
+                return float(age_str) if age_str.replace('.', '', 1).isdigit() else np.nan
+
+        df['Age'] = df['Age'].apply(parse_age)
+
+        # 2. Procesare Essential_Needs_Percentage
+        df['Essential_Needs_Percentage'] = pd.to_numeric(
+            df['Essential_Needs_Percentage'].str.replace('[^0-9.]', '', regex=True),
+            errors='coerce'
+        )
+
+        # 3. Procesare Income_Category
+        def parse_income(income):
+            income = str(income).replace(' RON', '').replace(',', '.')
+            if '-' in income:
+                low, high = map(float, income.split('-'))
+                return (low + high) / 2
+            elif '>' in income:
+                return float(income.replace('>', '')) * 1.2  # +20% buffer
+            elif '<' in income:
+                return float(income.replace('<', '')) * 0.8  # -20% buffer
+            else:
+                return float(income) if income.replace('.', '', 1).isdigit() else np.nan
+
+        df['Income_Category'] = df['Income_Category'].apply(parse_income)
+
+        # 4. Procesare coloane categorice ordinale
+        ordinal_mappings = {
+            'Impulse_Buying_Frequency': {
+                'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
+            },
+            'Debt_Level': {
+                'Difficult to manage': 3, 'Manageable': 2, 'Low': 1, 'None': 0, np.nan: 0, 'Unknown': 0
+            },
+            'Bank_Account_Analysis_Frequency': {
+                'Rarely or never': 1, 'Monthly': 2, 'Weekly': 3, 'Daily': 4
+            }
+        }
+
+        for col, mapping in ordinal_mappings.items():
+            df[col] = df[col].map(mapping).fillna(0).astype(int)
+
+        # 5. Procesare coloane cu durate (Product_Lifetime_*)
+        def parse_duration(duration):
+            duration = str(duration).strip().lower()  # Normalizăm șirul
+
+            if pd.isna(duration) or duration == 'not purchased yet':
+                return 0
+
+            # Gestionăm intervalele (ex: '3-5 years')
+            if '-' in duration:
+                parts = duration.split('-')
+                if 'year' in duration:
+                    # Convertim ani în luni
+                    low = int(parts[0].strip()) * 12
+                    high = int(parts[1].split()[0].strip()) * 12
+                else:
+                    # Presupunem că este în luni
+                    low = int(parts[0].strip())
+                    high = int(parts[1].split()[0].strip())
+                return (low + high) / 2  # Returnăm media
+
+            # Gestionăm '>'
+            if '>' in duration:
+                value = int(duration.replace('>', '').split()[0].strip())
+                if 'year' in duration:
+                    return value * 12 + 24  # Adăugăm un buffer de 2 ani
+                else:
+                    return value + 6  # Adăugăm un buffer de 6 luni
+
+            # Gestionăm '<'
+            if '<' in duration:
+                value = int(duration.replace('<', '').split()[0].strip())
+                if 'year' in duration:
+                    return max(0, value * 12 - 12)  # Scădem un buffer de 1 an
+                else:
+                    return max(0, value - 1)  # Scădem un buffer de 1 lună
+
+            # Gestionăm valori simple (ex: '12 months')
+            if 'year' in duration:
+                return int(duration.split()[0].strip()) * 12
+            elif 'month' in duration:
+                return int(duration.split()[0].strip())
+            else:
+                return 0
+
+        lifetime_cols = [c for c in df.columns if c.startswith('Product_Lifetime_')]
+        for col in lifetime_cols:
+            df[col] = df[col].apply(parse_duration)
+
+        # 6. Procesare coloane categorice nominale
+        nominal_cols = [
+            'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
+            'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
+            'Financial_Investments', 'Savings_Obstacle'
+        ]
+
+        # Filtrăm doar coloanele existente
+        nominal_cols = [col for col in nominal_cols if col in df.columns]
+
+        # One-hot encoding pentru categorii cu sub 10 valori unice
+        for col in nominal_cols:
+            if df[col].nunique() < 10:
+                dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
+                df = pd.concat([df, dummies], axis=1)
+                df.drop(columns=[col], inplace=True)
+
+        # 7. Procesare coloane Credit_*
+        credit_cols = [c for c in df.columns if c.startswith('Credit_')]
+        for col in credit_cols:
+            df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
+
+        # 8. Conversia coloanelor rămase la numeric
+        for col in df.select_dtypes(include=['object']).columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='raise')
+            except:
+                # Dacă nu poate fi convertită, eliminăm coloana
+                df.drop(columns=[col], inplace=True)
+
+        # 9. Imputare valori lipsă
+        for col in df.columns:
+            if df[col].isna().sum() > 0:
+                if df[col].dtype in ['int64', 'float64']:
+                    df[col] = df[col].fillna(df[col].median())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0])
+
+        return df
+
+    except Exception as e:
+        print(f"Eroare gravă la preprocesare: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def visualize_data(df):
@@ -227,6 +330,11 @@ def visualize_data(df):
         X_scaled = scaler.fit_transform(df[['Essential_Needs_Percentage',
                                             'Expense_Distribution_Entertainment']])
 
+        # Verificare număr minim de mostre
+        if X_scaled.shape[0] < CONFIG['min_samples_cluster']:
+            print(f"\nPrea puține mostre ({X_scaled.shape[0]}) pentru clustering.")
+            return None, None
+
         kmeans = KMeans(n_clusters=CONFIG['kmeans_clusters'], random_state=42)
         clusters = kmeans.fit_predict(X_scaled)
 
@@ -243,20 +351,31 @@ def visualize_data(df):
         plt.title('Clustering cu K-means și suprapunere risc')
         plt.show()
 
+        return X_scaled, clusters
+
     except Exception as e:
         print(f"Eroare la vizualizări: {str(e)}")
+        return None, None
 
 
-def save_metrics(df, y_test, y_pred, X_scaled, clusters):
-    metrics = {
-        'class_distribution': df['Behavior_Risk_Level'].value_counts(normalize=True).to_dict(),
-        'classification_report': classification_report(y_test, y_pred, output_dict=True),
-        'silhouette_score': round(silhouette_score(X_scaled, clusters), 2),
-        'logreg_coefficients': {col: round(coef, 3) for col, coef in zip(X.columns, logreg.coef_[0])}
-    }
+def save_metrics(df, model, y_test, y_pred, X_scaled, clusters):
+    """Salvează metricile în fișier JSON"""
+    try:
+        metrics = {
+            'class_distribution': df['Behavior_Risk_Level'].value_counts(normalize=True).to_dict(),
+            'classification_report': classification_report(y_test, y_pred, output_dict=True),
+            'silhouette_score': round(silhouette_score(X_scaled, clusters),
+                                      2) if X_scaled is not None and clusters is not None else None,
+            'logreg_coefficients': {col: round(coef, 3) for col, coef in
+                                    zip(model.feature_names_in_, model.coef_[0])} if model else None
+        }
 
-    with open('dataset_metrics.json', 'w') as f:
-        json.dump(metrics, f, indent=2)
+        with open('dataset_metrics.json', 'w') as f:
+            json.dump(metrics, f, indent=2)
+
+    except Exception as e:
+        print(f"Eroare la salvarea metricilor: {str(e)}")
+
 
 def main():
     """Flux principal"""
@@ -282,12 +401,13 @@ def main():
         print("- Modificați CONFIG['dynamic_threshold']")
         return
 
-    model, y_test = train_models(df)
+    model, y_test, y_pred = train_models(df)
     if model is None:
         return
 
-    visualize_data(df)
-    save_metrics(df, y_test, y_pred, X_scaled, clusters)
+    X_scaled, clusters = visualize_data(df)
+    save_metrics(df, model, y_test, y_pred, X_scaled, clusters)
+
 
 if __name__ == "__main__":
     main()
