@@ -1,4 +1,7 @@
 import pandas as pd
+import numpy as np
+import re
+from scipy.stats import truncnorm
 import openpyxl
 import os
 from tkinter import Tk, filedialog
@@ -229,6 +232,115 @@ def auto_adjust_column_width(writer, sheet_name):
         adjusted_width = max_length + 2
         worksheet.column_dimensions[column].width = adjusted_width
 
+def truncated_normal(mean, std_dev, lower, upper):
+    a, b = (lower - mean) / std_dev, (upper - mean) / std_dev
+    return truncnorm.rvs(a, b, loc=mean, scale=std_dev, size=1)[0]
+
+def random_age(value):
+    value = str(value).strip()
+    match = re.match(r"(\d+)\s*-\s*(\d+)", value)
+    if match:
+        lower, upper = map(int, match.groups())
+        return np.random.randint(lower, upper + 1)
+    match = re.match(r">\s*(\d+)", value)
+    if match:
+        num = int(match.group(1))
+        if num >= 50:
+            return np.random.randint(50, 71)
+    match = re.match(r"<\s*(\d+)", value)
+    if match:
+        num = int(match.group(1))
+        if num <= 20:
+            return np.random.randint(18, 21)
+    try:
+        return int(value)
+    except:
+        return value
+
+
+def random_income(value):
+    value = str(value).replace(".", "").strip()
+    match = re.match(r"(\d+)[^\d]+(\d+)", value)
+    if match:
+        lower, upper = map(int, match.groups())
+        random_value = np.random.randint(lower // 100, (upper // 100) + 1) * 100
+        return random_value
+    match = re.match(r">\s*(\d+)", value)
+    if match:
+        lower = int(match.group(1))
+        upper = lower + 10000
+        random_value = np.random.randint(lower // 100, (upper // 100) + 1) * 100
+        return random_value
+    match = re.match(r"<\s*(\d+)", value)
+    if match:
+        upper = int(match.group(1))
+        lower = 3000
+        random_value = np.random.randint(lower // 100, (upper // 100) + 1) * 100
+        return random_value
+    try:
+        return int(value) // 100 * 100  # Rotunjim la cel mai apropiat multiplu de 100
+    except:
+        return value
+
+def random_product_lifetime(value):
+    value = str(value).strip()
+    if "Not purchased yet" in value:
+        return value
+    if "month" in value.lower():
+        match = re.match(r"(\d+)\s*-\s*(\d+)\s*months", value, re.IGNORECASE)
+        if match:
+            lower, upper = map(int, match.groups())
+            rand_val = np.random.randint(lower, upper + 1)
+            return f"{rand_val} months"
+        match = re.match(r"(\d+)", value)
+        if match:
+            return f"{match.group(1)} months"
+    if "year" in value.lower():
+        match = re.match(r"(\d+)\s*-\s*(\d+)\s*years", value, re.IGNORECASE)
+        if match:
+            lower, upper = map(int, match.groups())
+            rand_val = np.random.randint(lower, upper + 1)
+            return f"{rand_val} years"
+        match = re.match(r">\s*(\d+)\s*years", value, re.IGNORECASE)
+        if match:
+            lower = int(match.group(1))
+            upper = lower + 5
+            rand_val = np.random.randint(lower, upper + 1)
+            return f"{rand_val} years"
+        match = re.match(r"<\s*(\d+)\s*years", value, re.IGNORECASE)
+        if match:
+            upper = int(match.group(1))
+            lower = max(1, upper - 5)
+            rand_val = np.random.randint(lower, upper + 1)
+            return f"{rand_val} years"
+    return value
+
+def replace_age_column(df, column_name="Age"):
+    df[column_name] = df[column_name].apply(random_age)
+    return df
+
+def replace_income_category(df, column_name="Income_Category"):
+    df[column_name] = df[column_name].apply(random_income)
+    return df
+
+def replace_product_lifetime_columns(df, columns):
+    for col in columns:
+        df[col] = df[col].apply(random_product_lifetime)
+    return df
+
+
+def range_smoothing(df, age_column="Age", income_column="Income_Category", lifetime_columns=None):
+
+    if age_column in df.columns:
+        df = replace_age_column(df, age_column)
+
+    if income_column in df.columns:
+        df = replace_income_category(df, income_column)
+
+    if lifetime_columns:
+        df = replace_product_lifetime_columns(df, lifetime_columns)
+
+    return df
 
 def save_files(df):
     # Select location to save the processed file (Excel)
@@ -281,6 +393,10 @@ def main():
 
         print("\n>>> Normalizing and translating data...")
         df_processed = normalize_and_translate_data(df)
+
+        print("\n>>> Applying range smoothing...")
+        df_processed = range_smoothing(df_processed, age_column="Age", income_column="Income_Category",
+                                       lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech", "Product_Lifetime_Appliances", "Product_Lifetime_Cars"])
 
         # Debug pentru coloane după procesare
         print("\n>>> DEBUG: Columns AFTER processing:")
