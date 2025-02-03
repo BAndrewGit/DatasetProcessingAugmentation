@@ -6,6 +6,9 @@ import openpyxl
 import os
 from tkinter import Tk, filedialog
 
+CONFIG = {
+    'risk_weights': [0.3, 0.25, 0.35, 0.1],}
+
 def normalize_and_translate_data(df):
     df.columns = df.columns.str.strip()
 
@@ -220,6 +223,111 @@ def normalize_and_translate_data(df):
 
     return df
 
+def postprocess_data(df):
+    """Preprocesare avansată a tuturor coloanelor"""
+    try:
+        # 4. Procesare coloane categorice ordinale
+        ordinal_mappings = {
+            'Impulse_Buying_Frequency': {
+                'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
+            },
+            'Debt_Level': {
+                'Difficult to manage': 3, 'Manageable': 2, 'Low': 1, 'None': 0, np.nan: 0, 'Unknown': 0
+            },
+            'Bank_Account_Analysis_Frequency': {
+                'Rarely or never': 1, 'Monthly': 2, 'Weekly': 3, 'Daily': 4
+            }
+        }
+
+        for col, mapping in ordinal_mappings.items():
+            df[col] = df[col].map(mapping).fillna(0).astype(int)
+
+        # 6. Procesare coloane categorice nominale
+        nominal_cols = [
+            'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
+            'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
+            'Financial_Investments', 'Savings_Obstacle'
+        ]
+
+        # Filtrăm doar coloanele existente
+        nominal_cols = [col for col in nominal_cols if col in df.columns]
+
+        # One-hot encoding pentru categorii cu sub 10 valori unice
+        for col in nominal_cols:
+            if df[col].nunique() < 10:
+                dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
+                df = pd.concat([df, dummies], axis=1)
+                df.drop(columns=[col], inplace=True)
+
+        # 7. Procesare coloane Credit_*
+        credit_cols = [c for c in df.columns if c.startswith('Credit_')]
+        for col in credit_cols:
+            df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
+
+        # 8. Conversia coloanelor rămase la numeric
+        for col in df.select_dtypes(include=['object']).columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='raise')
+            except:
+                # Dacă nu poate fi convertită, eliminăm coloana
+                df.drop(columns=[col], inplace=True)
+
+        # 9. Imputare valori lipsă
+        for col in df.columns:
+            if df[col].isna().sum() > 0:
+                if df[col].dtype in ['int64', 'float64']:
+                    df[col] = df[col].fillna(df[col].median())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0])
+
+        return df
+
+    except Exception as e:
+        print(f"Eroare gravă la preprocesare: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def calculate_risk_score(df):
+    """Calculează scorul de risc și etichetele (recalculează mereu valorile)"""
+    try:
+        # Categorii de venit ajustate
+        is_low_income = df['Income_Category'] < 5000
+        is_high_income = df['Income_Category'] > 7500
+
+        # Calcul condiții cu verificare dimensiuni
+        conditions = [
+            (is_low_income & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
+            (is_high_income & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
+            (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
+            (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
+            (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
+        ]
+
+        # Calculează Risk_Score (mereu proaspăt)
+        df['Risk_Score'] = np.sum(conditions, axis=0)
+
+        # Verificare scoruri unice
+        if df['Risk_Score'].nunique() == 1:
+            print("\nToate scorurile de risc sunt identice! Ajustați ponderile.")
+            return None
+
+        # Prag dinamic bazat pe percentila 75%
+        threshold = df['Risk_Score'].quantile(0.75)
+        print(f"\nPrag automat determinat: {threshold:.2f}")
+
+        # Actualizează Behavior_Risk_Level (suprascrie dacă există deja)
+        df['Behavior_Risk_Level'] = np.where(
+            df['Risk_Score'] > threshold,
+            'Risky',
+            'Beneficially'
+        )
+
+        return df
+
+    except Exception as e:
+        print(f"Eroare la calcul risc: {str(e)}")
+        return None
 
 def auto_adjust_column_width(writer, sheet_name):
     workbook = writer.book
@@ -260,7 +368,6 @@ def random_age(value):
         return int(value)
     except:
         return value
-
 
 def random_income(value):
     value = str(value).replace(".", "").strip()
@@ -459,29 +566,45 @@ def main():
         for val in test_values:
             result = random_essential_needs(val)
             print(f"Input: {val} => Output: {result}")
+
         # IMPORTANT: Specificăm sep="," și quotechar='"'
         print(f"Loading file: {file_path}")
         df = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
 
         print("\n>>> Normalizing and translating data...")
-        df_processed = normalize_and_translate_data(df)
+        df = normalize_and_translate_data(df)
 
         print("\n>>> Applying range smoothing...")
-        df_processed = range_smoothing(df_processed, age_column="Age", income_column="Income_Category",
-                                       lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech", "Product_Lifetime_Appliances", "Product_Lifetime_Cars"])
+        df = range_smoothing(df, age_column="Age", income_column="Income_Category",
+                             lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech",
+                                               "Product_Lifetime_Appliances", "Product_Lifetime_Cars"])
+
+        df_original = df.copy()
+
+        # Apelăm funcțiile suplimentare înainte de salvare
+        print("\n>>> Post-processing data...")
+        df = postprocess_data(df)
+        if df is None:
+            return
+
+        print("\n>>> Calculating risk score...")
+        df = calculate_risk_score(df)
+        if df is None:
+            return
+
+        df_original['Behavior_Risk_Level'] = df['Behavior_Risk_Level']
 
         # Debug pentru coloane după procesare
         print("\n>>> DEBUG: Columns AFTER processing:")
-        print(df_processed.columns)
+        print(df.columns)
 
         print("\n>>> Saving processed data...")
-        save_files(df_processed)
+        save_files(df_original)
 
         print("\nProcessing complete!")
 
     except Exception as e:
         print(f"An error occurred during processing: {e}")
-
 
 
 if __name__ == "__main__":
