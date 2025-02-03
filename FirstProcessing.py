@@ -592,6 +592,16 @@ def main():
         if df is None:
             return
 
+        print("\nDistribuție inițială risc:")
+        print(df['Behavior_Risk_Level'].value_counts(dropna=False))
+
+        if len(df['Behavior_Risk_Level'].unique()) == 1:
+            print("\nNu există suficiente variante de risc pentru analiză!")
+            print("Posibile soluții:")
+            print("- Ajustați ponderile din CONFIG['risk_weights']")
+            print("- Modificați CONFIG['dynamic_threshold']")
+            return
+
         df_original['Behavior_Risk_Level'] = df['Behavior_Risk_Level']
 
         # Debug pentru coloane după procesare

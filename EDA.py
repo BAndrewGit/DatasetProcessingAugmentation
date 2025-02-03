@@ -17,7 +17,8 @@ CONFIG = {
         'Essential_Needs_Percentage',
         'Expense_Distribution_Entertainment',
         'Debt_Level',
-        'Savings_Goal_Emergency_Fund'
+        'Savings_Goal_Emergency_Fund',
+        'Behavior_Risk_Level'
     ],
     'risk_weights': [0.3, 0.25, 0.35, 0.1],
     'test_size': 0.25,
@@ -55,48 +56,6 @@ def load_data():
         return None
 
 
-def calculate_risk_score(df):
-    """Calculează scorul de risc și etichetele"""
-    try:
-        # Categorii de venit ajustate
-        is_low_income = df['Income_Category'] < 5000
-        is_high_income = df['Income_Category'] > 7500
-
-        # Calcul condiții cu verificare dimensiuni
-        conditions = [
-            (is_low_income & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
-            (is_high_income & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
-
-            (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
-            (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
-            (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
-        ]
-
-        df['Risk_Score'] = np.sum(conditions, axis=0)
-
-        # Verificare scoruri unice
-        if df['Risk_Score'].nunique() == 1:
-            print("\nToate scorurile de risc sunt identice! Ajustați ponderile.")
-            return None
-
-        # Prag dinamic bazat pe percentila 75%
-        threshold = df['Risk_Score'].quantile(0.75)
-
-        print(f"\nPrag automat determinat: {threshold:.2f}")
-
-        df['Behavior_Risk_Level'] = np.where(
-            df['Risk_Score'] > threshold,
-            'Riscant',
-            'Benefic'
-        )
-
-        return df
-
-    except Exception as e:
-        print(f"Eroare la calcul risc: {str(e)}")
-        return None
-
-
 def train_models(df):
     try:
         # Folosește toate coloanele, cu excepția variabilei țintă
@@ -123,12 +82,12 @@ def train_models(df):
         # Evaluare
         y_pred = logreg.predict(X_test)
         print("\nRaport clasificare:")
-        print(classification_report(y_test, y_pred, target_names=['Benefic', 'Riscant']))
+        print(classification_report(y_test, y_pred, target_names=['Beneficially', 'Risky']))
 
         # Afișare matrice confuzie
         ConfusionMatrixDisplay.from_predictions(
             y_test, y_pred,
-            display_labels=['Benefic', 'Riscant'],
+            display_labels=['Beneficially', 'Risky'],
             cmap='Blues'
         )
         plt.title('Matrice de confuzie')
@@ -152,6 +111,15 @@ def train_models(df):
 def preprocess_data(df):
     """Preprocesare avansată a tuturor coloanelor"""
     try:
+
+        # Excludem coloana țintă din preprocesare
+        target_col = 'Behavior_Risk_Level'
+        if target_col not in df.columns:
+            raise KeyError(f"Coloana {target_col} lipsește!")
+
+        y = df[target_col]  # Salvăm etichetele
+        df = df.drop(columns=[target_col])
+
         # 4. Procesare coloane categorice ordinale
         ordinal_mappings = {
             'Impulse_Buying_Frequency': {
@@ -205,6 +173,8 @@ def preprocess_data(df):
                     df[col] = df[col].fillna(df[col].median())
                 else:
                     df[col] = df[col].fillna(df[col].mode()[0])
+
+        df[target_col] = y
 
         return df
 
@@ -301,19 +271,6 @@ def main():
     if df is None:
         return
 
-    df = calculate_risk_score(df)
-    if df is None:
-        return
-
-    print("\nDistribuție inițială risc:")
-    print(df['Behavior_Risk_Level'].value_counts(dropna=False))
-
-    if len(df['Behavior_Risk_Level'].unique()) == 1:
-        print("\nNu există suficiente variante de risc pentru analiză!")
-        print("Posibile soluții:")
-        print("- Ajustați ponderile din CONFIG['risk_weights']")
-        print("- Modificați CONFIG['dynamic_threshold']")
-        return
 
     model, y_test, y_pred = train_models(df)
     if model is None:
