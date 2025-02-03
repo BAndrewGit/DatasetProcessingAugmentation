@@ -152,44 +152,6 @@ def train_models(df):
 def preprocess_data(df):
     """Preprocesare avansată a tuturor coloanelor"""
     try:
-        # 1. Procesare coloană Age
-        def parse_age(age_str):
-            if pd.isna(age_str):
-                return np.nan
-            age_str = str(age_str)
-            if '-' in age_str:
-                parts = list(map(int, age_str.split('-')))
-                return np.mean(parts)
-            elif age_str.startswith('>'):
-                return int(age_str[1:]) + 5
-            elif age_str.startswith('<'):
-                return int(age_str[1:]) - 5
-            else:
-                return float(age_str) if age_str.replace('.', '', 1).isdigit() else np.nan
-
-        df['Age'] = df['Age'].apply(parse_age)
-
-        # 2. Procesare Essential_Needs_Percentage
-        df['Essential_Needs_Percentage'] = pd.to_numeric(
-            df['Essential_Needs_Percentage'].str.replace('[^0-9.]', '', regex=True),
-            errors='coerce'
-        )
-
-        # 3. Procesare Income_Category
-        def parse_income(income):
-            income = str(income).replace(' RON', '').replace(',', '.')
-            if '-' in income:
-                low, high = map(float, income.split('-'))
-                return (low + high) / 2
-            elif '>' in income:
-                return float(income.replace('>', '')) * 1.2  # +20% buffer
-            elif '<' in income:
-                return float(income.replace('<', '')) * 0.8  # -20% buffer
-            else:
-                return float(income) if income.replace('.', '', 1).isdigit() else np.nan
-
-        df['Income_Category'] = df['Income_Category'].apply(parse_income)
-
         # 4. Procesare coloane categorice ordinale
         ordinal_mappings = {
             'Impulse_Buying_Frequency': {
@@ -205,54 +167,6 @@ def preprocess_data(df):
 
         for col, mapping in ordinal_mappings.items():
             df[col] = df[col].map(mapping).fillna(0).astype(int)
-
-        # 5. Procesare coloane cu durate (Product_Lifetime_*)
-        def parse_duration(duration):
-            duration = str(duration).strip().lower()  # Normalizăm șirul
-
-            if pd.isna(duration) or duration == 'not purchased yet':
-                return 0
-
-            # Gestionăm intervalele (ex: '3-5 years')
-            if '-' in duration:
-                parts = duration.split('-')
-                if 'year' in duration:
-                    # Convertim ani în luni
-                    low = int(parts[0].strip()) * 12
-                    high = int(parts[1].split()[0].strip()) * 12
-                else:
-                    # Presupunem că este în luni
-                    low = int(parts[0].strip())
-                    high = int(parts[1].split()[0].strip())
-                return (low + high) / 2  # Returnăm media
-
-            # Gestionăm '>'
-            if '>' in duration:
-                value = int(duration.replace('>', '').split()[0].strip())
-                if 'year' in duration:
-                    return value * 12 + 24  # Adăugăm un buffer de 2 ani
-                else:
-                    return value + 6  # Adăugăm un buffer de 6 luni
-
-            # Gestionăm '<'
-            if '<' in duration:
-                value = int(duration.replace('<', '').split()[0].strip())
-                if 'year' in duration:
-                    return max(0, value * 12 - 12)  # Scădem un buffer de 1 an
-                else:
-                    return max(0, value - 1)  # Scădem un buffer de 1 lună
-
-            # Gestionăm valori simple (ex: '12 months')
-            if 'year' in duration:
-                return int(duration.split()[0].strip()) * 12
-            elif 'month' in duration:
-                return int(duration.split()[0].strip())
-            else:
-                return 0
-
-        lifetime_cols = [c for c in df.columns if c.startswith('Product_Lifetime_')]
-        for col in lifetime_cols:
-            df[col] = df[col].apply(parse_duration)
 
         # 6. Procesare coloane categorice nominale
         nominal_cols = [
