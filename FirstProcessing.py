@@ -313,7 +313,62 @@ def random_product_lifetime(value):
             lower = max(1, upper - 5)
             rand_val = np.random.randint(lower, upper + 1)
             return f"{rand_val} years"
-    return value
+        return value
+
+def random_essential_needs(value):
+    if pd.isna(value) or str(value).strip().lower() == "nan":
+        return np.nan
+
+    str_value = str(value).strip().replace('%', '').replace(',', '.')
+    min_val, max_val = None, None
+
+    try:
+        if '<' in str_value:
+            # Case: "<50%" → [30, 50)
+            min_val, max_val = 30, 50
+        elif '>' in str_value:
+            # Case: ">75%" → (75, 80]
+            min_val, max_val = 75, 80
+        elif '-' in str_value:
+            # Case: "50-75%"
+            parts = str_value.split('-')
+            min_val = float(parts[0])
+            max_val = float(parts[1])
+        else:
+            # Numeric handling (e.g., "45", "60%")
+            num_value = float(str_value)
+            if num_value < 50:
+                min_val, max_val = 30, 50
+            elif 50 <= num_value <= 75:
+                min_val, max_val = 50, 75
+            else:
+                min_val, max_val = 75, 80
+    except ValueError:
+        return np.nan  # Handle invalid splits or conversions
+
+    # Debug print to check the interval (now safe)
+    print(f"[DEBUG] Processed value={value}, min={min_val}, max={max_val}")
+
+    # Handle invalid ranges (e.g., min > max)
+    if min_val is None or max_val is None or np.isnan(min_val) or np.isnan(max_val):
+        return np.nan  # Invalid configuration
+
+    # Ensure valid range (swap if needed)
+    if min_val > max_val:
+        min_val, max_val = max_val, min_val
+    elif min_val == max_val:
+        return min_val  # No randomness needed
+
+    # Generate random number in [min_val, max_val]
+    random_num = np.random.uniform(min_val, max_val)
+
+    # Round to nearest 5
+    rounded_value = np.round(random_num / 5) * 5
+
+    # Clamp to [min_val, max_val] (inclusive)
+    rounded_value = max(min_val, min(rounded_value, max_val))
+
+    return rounded_value
 
 def replace_age_column(df, column_name="Age"):
     df[column_name] = df[column_name].apply(random_age)
@@ -328,8 +383,12 @@ def replace_product_lifetime_columns(df, columns):
         df[col] = df[col].apply(random_product_lifetime)
     return df
 
+def replace_essential_needs(df, column_name="Essential_Needs_Percentage"):
+    df[column_name] = df[column_name].apply(random_essential_needs)
+    return df
 
-def range_smoothing(df, age_column="Age", income_column="Income_Category", lifetime_columns=None):
+def range_smoothing(df, age_column="Age", income_column="Income_Category", lifetime_columns=None,
+                    essential_needs_column="Essential_Needs_Percentage"):
 
     if age_column in df.columns:
         df = replace_age_column(df, age_column)
@@ -339,6 +398,9 @@ def range_smoothing(df, age_column="Age", income_column="Income_Category", lifet
 
     if lifetime_columns:
         df = replace_product_lifetime_columns(df, lifetime_columns)
+
+    if essential_needs_column in df.columns:
+        df = replace_essential_needs(df, essential_needs_column)
 
     return df
 
@@ -383,13 +445,13 @@ def main():
         return
 
     try:
+        test_values = ["<50%", "50-75%", ">75%", "45", "80%", "50-abc", "NaN", "invalid"]
+        for val in test_values:
+            result = random_essential_needs(val)
+            print(f"Input: {val} => Output: {result}")
         # IMPORTANT: Specificăm sep="," și quotechar='"'
         print(f"Loading file: {file_path}")
         df = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
-
-        # Debug pentru coloane înainte de procesare
-        print("\n>>> DEBUG: Columns BEFORE processing:")
-        print(df.columns)
 
         print("\n>>> Normalizing and translating data...")
         df_processed = normalize_and_translate_data(df)
