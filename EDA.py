@@ -114,7 +114,7 @@ def train_models(df):
         # Logistic Regression
         logreg = LogisticRegression(
             class_weight='balanced',
-            solver='liblinear',
+            solver='newton-cg',
             max_iter=1000,
             random_state=42
         )
