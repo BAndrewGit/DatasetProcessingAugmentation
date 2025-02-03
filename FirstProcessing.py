@@ -66,6 +66,7 @@ def normalize_and_translate_data(df):
         "Nu consider economiile o prioritate": "I don't consider savings a priority",
         "Recompensă personală („merit acest lucru”)": "Self-reward",
         "Reduceri sau promoții": "Discounts or promotions",
+        "Presiuni sociale („toți prietenii au acest lucru”)": "Social pressure",
         "Da, pentru cheltuieli neprevăzute dar inevitabile": "Yes, for unexpected expenses",
         "Inexistent": "None",
         "Scăzut": "Low",
@@ -101,23 +102,26 @@ def normalize_and_translate_data(df):
         "4000-8000 RON": "4.000-8.000 RON",
         "Peste 16.000 RON": ">16.000 RON",
         "Sub 4000 RON": "<4.000 RON",
-        "Divertisment și timp liber": "Entertainment and leisure",
-        "Haine sau produse de îngrijire personală": "Clothing or personal care products",
-        "Electronice sau gadget-uri": "Electronics or gadgets"
     }
 
 
     # Aplicăm traducerile single-value
     df.replace(basic_translation, inplace=True)
 
-    # Traducem `Impulse_Buying_Reason`
+    # Traducem `Impulse_Buying_Category`
     impulse_map = {
         "Alimentație": "Food",
-        "Divertisment și timp liber (iesiri cu prietenii, hobby-uri, excursii)": "Entertainment",
+        "Haine sau produse de îngrijire personală": "Clothing or personal care products",
+        "Electronice sau gadget-uri": "Electronics or gadgets",
+        "Divertisment și timp liber": "Entertainment",
         "Altceva": "Other"
     }
+    if "Impulse_Buying_Category" in df.columns:
+        df["Impulse_Buying_Category"] = df["Impulse_Buying_Category"].replace(impulse_map)
+
+    impulse_r_map = {"Altceva": "Other"}
     if "Impulse_Buying_Reason" in df.columns:
-        df["Impulse_Buying_Reason"] = df["Impulse_Buying_Reason"].replace(impulse_map)
+        df["Impulse_Buying_Reason"] = df["Impulse_Buying_Reason"].replace(impulse_r_map)
 
     # Traducem `Savings_Obstacle`
     obstacle_map = {"Altceva": "Other"}
@@ -138,7 +142,7 @@ def normalize_and_translate_data(df):
         "Alimentație": "Expense_Distribution_Food",
         "Locuință (chirie, utilități)": "Expense_Distribution_Housing",
         "Transport": "Expense_Distribution_Transport",
-        "Divertisment și timp liber (ieșiri cu prietenii, hobby-uri, excursii)": "Expense_Distribution_Entertainment",
+        "Divertisment și timp liber (iesiri cu prietenii, hobby-uri, excursii)": "Expense_Distribution_Entertainment",
         "Sănătate (consultații medicale, medicamente, fizioterapie)": "Expense_Distribution_Health",
         "Aspect personal (salon, cosmetice, haine, fitness)": "Expense_Distribution_Personal_Care",
         "Cheltuieli generale pentru copii (îmbrăcăminte, activități extrașcolare)": "Expense_Distribution_Child_Education",
@@ -286,6 +290,12 @@ def random_product_lifetime(value):
     value = str(value).strip()
     if "Not purchased yet" in value:
         return value
+    match = re.match(r"<\s*(\d+)\s*months", value, re.IGNORECASE)
+    if match:
+        upper = int(match.group(1))
+        lower = max(1, upper - 3)  # Generează între [upper-3, upper)
+        rand_val = np.random.randint(lower, upper)
+        return f"{rand_val} months"
     if "month" in value.lower():
         match = re.match(r"(\d+)\s*-\s*(\d+)\s*months", value, re.IGNORECASE)
         if match:
