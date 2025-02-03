@@ -58,9 +58,15 @@ def load_data():
 def calculate_risk_score(df):
     """Calculează scorul de risc și etichetele"""
     try:
+        # Categorii de venit ajustate
+        is_low_income = df['Income_Category'] < 5000
+        is_high_income = df['Income_Category'] > 7500
+
         # Calcul condiții cu verificare dimensiuni
         conditions = [
-            (df['Essential_Needs_Percentage'] < 45) * CONFIG['risk_weights'][0],
+            (is_low_income & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
+            (is_high_income & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
+
             (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
             (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
             (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
@@ -73,15 +79,8 @@ def calculate_risk_score(df):
             print("\nToate scorurile de risc sunt identice! Ajustați ponderile.")
             return None
 
-        # Determinare prag dinamic
-        if isinstance(CONFIG['dynamic_threshold'], (int, float)):
-            threshold = CONFIG['dynamic_threshold']
-        elif CONFIG['dynamic_threshold'] == 'median':
-            threshold = df['Risk_Score'].median()
-        elif CONFIG['dynamic_threshold'] == 'mean':
-            threshold = df['Risk_Score'].mean()
-        else:
-            threshold = df['Risk_Score'].quantile(0.75)
+        # Prag dinamic bazat pe percentila 75%
+        threshold = df['Risk_Score'].quantile(0.75)
 
         print(f"\nPrag automat determinat: {threshold:.2f}")
 
@@ -115,6 +114,7 @@ def train_models(df):
         # Logistic Regression
         logreg = LogisticRegression(
             class_weight='balanced',
+            solver='liblinear',
             max_iter=1000,
             random_state=42
         )
