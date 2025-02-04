@@ -126,7 +126,7 @@ def preprocess_data(df):
                 'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
             },
             'Debt_Level': {
-                'Difficult to manage': 3, 'Manageable': 2, 'Low': 1, 'None': 0, np.nan: 0, 'Unknown': 0
+                'Difficult to manage': 4, 'Manageable': 3, 'Low': 2, 'Absent': 1, np.nan: 0, 'Unknown': 0
             },
             'Bank_Account_Analysis_Frequency': {
                 'Rarely or never': 1, 'Monthly': 2, 'Weekly': 3, 'Daily': 4
