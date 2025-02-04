@@ -324,8 +324,8 @@ def calculate_risk_score(df):
         # Actualizează Behavior_Risk_Level (suprascrie dacă există deja)
         df['Behavior_Risk_Level'] = np.where(
             df['Risk_Score'] > threshold,
-            'Risky',
-            'Beneficially'
+            1,  # Risky
+            0  # Beneficially
         )
 
         return df

@@ -84,13 +84,13 @@ def train_models(df):
         print("\nRaport clasificare:")
         print(classification_report(y_test, y_pred, target_names=['Beneficially', 'Risky']))
 
-        # Afișare matrice confuzie
-        ConfusionMatrixDisplay.from_predictions(
+        # Afișare matrice confuzie cu etichete
+        disp = ConfusionMatrixDisplay.from_predictions(
             y_test, y_pred,
             display_labels=['Beneficially', 'Risky'],
             cmap='Blues'
         )
-        plt.title('Matrice de confuzie')
+        disp.ax_.set_title('Matrice de confuzie')
         plt.show()
 
         # Analiza importanței caracteristicilor
@@ -186,30 +186,37 @@ def preprocess_data(df):
 
 
 def visualize_data(df):
-    """Generează vizualizări"""
+    """Generează vizualizări cu etichete explicative"""
     try:
+        # Creăm o copie pentru vizualizare care să folosească etichete
+        df_viz = df.copy()
+        df_viz['Behavior_Risk_Label'] = df_viz['Behavior_Risk_Level'].map({
+            0: 'Beneficially',
+            1: 'Risky'
+        })
+
         # Distribuție risc
-        risk_dist = df['Behavior_Risk_Level'].value_counts(normalize=True)
         plt.figure(figsize=(8, 5))
-        sns.barplot(x=risk_dist.index, y=risk_dist.values)
+        sns.countplot(x='Behavior_Risk_Label', data=df_viz)
         plt.title('Distribuția nivelului de risc')
-        plt.ylabel('Procentaj')
+        plt.xlabel('Nivel de risc')
+        plt.ylabel('Număr de cazuri')
         plt.show()
 
         # Pairplot doar dacă avem ambele clase
-        if len(df['Behavior_Risk_Level'].unique()) > 1:
+        if len(df_viz['Behavior_Risk_Label'].unique()) > 1:
             sns.pairplot(
-                df,
+                df_viz,
                 vars=['Essential_Needs_Percentage',
                       'Expense_Distribution_Entertainment',
                       'Debt_Level'],
-                hue='Behavior_Risk_Level',
+                hue='Behavior_Risk_Label',
                 palette='husl'
             )
             plt.suptitle('Analiza multivariabilă a factorilor de risc', y=1.02)
             plt.show()
 
-        # Clustering
+        # Clustering (folosim valorile originale pentru calcul)
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(df[['Essential_Needs_Percentage',
                                             'Expense_Distribution_Entertainment']])
@@ -227,7 +234,7 @@ def visualize_data(df):
             x=X_scaled[:, 0],
             y=X_scaled[:, 1],
             hue=clusters,
-            style=df['Behavior_Risk_Level'],
+            style=df_viz['Behavior_Risk_Label'],  # Folosim etichetele aici
             palette='viridis'
         )
         plt.xlabel('Necesități esențiale (standardizate)')
@@ -243,19 +250,38 @@ def visualize_data(df):
 
 
 def save_metrics(df, model, y_test, y_pred, X_scaled, clusters):
-    """Salvează metricile în fișier JSON"""
+    """Salvează metricile în fișier JSON, inclusiv etichetele explicative"""
     try:
-        metrics = {
-            'class_distribution': df['Behavior_Risk_Level'].value_counts(normalize=True).to_dict(),
-            'classification_report': classification_report(y_test, y_pred, output_dict=True),
-            'silhouette_score': round(silhouette_score(X_scaled, clusters),
-                                      2) if X_scaled is not None and clusters is not None else None,
-            'logreg_coefficients': {col: round(coef, 3) for col, coef in
-                                    zip(model.feature_names_in_, model.coef_[0])} if model else None
+        # Mapare valori binare la etichete explicative
+        class_distribution = df['Behavior_Risk_Level'].value_counts(normalize=True).to_dict()
+        class_distribution_labeled = {
+            'Beneficially': class_distribution.get(0, 0),  # Valoarea 0 -> Beneficially
+            'Risky': class_distribution.get(1, 0)          # Valoarea 1 -> Risky
         }
 
+        # Generare raport de clasificare cu etichete explicative
+        classification_report_dict = classification_report(
+            y_test, y_pred,
+            target_names=['Beneficially', 'Risky'],
+            output_dict=True
+        )
+
+        # Structura finală a metricilor
+        metrics = {
+            'class_distribution': class_distribution_labeled,  # Folosim distribuția cu etichete
+            'classification_report': classification_report_dict,
+            'silhouette_score': round(silhouette_score(X_scaled, clusters), 2)
+                               if X_scaled is not None and clusters is not None else None,
+            'logreg_coefficients': {col: round(coef, 3) for col, coef in
+                                   zip(model.feature_names_in_, model.coef_[0])}
+                                   if model else None
+        }
+
+        # Salvarea în fișier JSON
         with open('dataset_metrics.json', 'w') as f:
             json.dump(metrics, f, indent=2)
+
+        print("Metricile au fost salvate cu succes în 'dataset_metrics.json'.")
 
     except Exception as e:
         print(f"Eroare la salvarea metricilor: {str(e)}")
