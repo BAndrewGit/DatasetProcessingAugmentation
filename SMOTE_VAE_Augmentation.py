@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from keras.src.layers import Dropout, GaussianNoise
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, OrdinalEncoder
 from sklearn.compose import ColumnTransformer
 from imblearn.over_sampling import SMOTE
@@ -106,54 +107,74 @@ def apply_smote(X, y):
     return smote.fit_resample(X, y)
 
 
-# Clasa VAE este definită, însă apelul său este comentat pentru moment
 class VAE:
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, latent_dim=64): # [!] Crește latent_dim
         self.input_dim = input_dim
+        self.latent_dim = latent_dim
         self.encoder, self.decoder, self.vae = self._build_model()
 
     def _build_model(self):
-        # Encoder
+        # STRATUL DE INTRARE
         inputs = Input(shape=(self.input_dim,))
-        h = Dense(64, activation='relu')(inputs)
-        z_mean = Dense(2)(h)
-        z_log_var = Dense(2)(h)
 
+        # ENCODER
+        x = Dense(128, activation='relu')(inputs)
+        x = GaussianNoise(0.2)(x) # Adăugăm zgomot
+        x = Dropout(0.6)(x)
+        z_mean = Dense(self.latent_dim)(x)
+        z_log_var = Dense(self.latent_dim)(x)
+
+        # SAMPLING
         def sampling(args):
             z_mean, z_log_var = args
-            epsilon = K.random_normal(shape=(K.shape(z_mean)[0], 2))
-            return z_mean + K.exp(0.5 * z_log_var) * epsilon
+            epsilon = K.random_normal(shape=(K.shape(z_mean)[0], self.latent_dim))
+            return z_mean + K.exp(1.2 * z_log_var) * epsilon  # [!] Crește coeficientul
 
         z = Lambda(sampling)([z_mean, z_log_var])
 
-        # Decodor
-        decoder_h = Dense(64, activation='relu')
-        decoder_out = Dense(self.input_dim)
-        h_decoded = decoder_h(z)
-        outputs = decoder_out(h_decoded)
+        # DECODER - CREAREA STRATURILOR DECODERULUI (le salvăm în variabile)
+        dec_dense1 = Dense(128, activation='relu')
+        dec_dense2 = Dense(64, activation='relu')
+        dec_dense3 = Dense(64, activation='relu') # [!] Adaugă un strat suplimentar
+        dec_out = Dense(self.input_dim)  # Fără activare finală sau cu activare adecvată pentru datele tale
 
+        # Aplicăm straturile asupra lui z pentru modelul VAE:
+        d = dec_dense1(z)
+        d = dec_dense2(d)
+        d = dec_dense3(d) # [!] Adaugă stratul suplimentar
+        outputs = dec_out(d)
+
+
+        # MODELE
         vae = Model(inputs, outputs)
         reconstruction_loss = K.mean(K.square(inputs - outputs))
-        kl_loss = -0.5 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
-        vae.add_loss(K.mean(reconstruction_loss + kl_loss))
-        vae.compile(optimizer=Adam(0.001))
+        kl_loss = -0.1 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1) # [!] Scade KL loss
+        vae.add_loss(K.mean(reconstruction_loss + 0.05 * kl_loss))
+        vae.compile(optimizer=Adam(0.0001)) # [!] Scade rata de învățare
 
+        # MODELUL DE ENCODER
         encoder = Model(inputs, z_mean)
-        latent_inputs = Input(shape=(2,))
-        _h_decoded = decoder_h(latent_inputs)
-        _decoded = decoder_out(_h_decoded)
+
+        # MODELUL DE DECODER
+        latent_inputs = Input(shape=(self.latent_dim,))
+        h_decoded = dec_dense1(latent_inputs)
+        h_decoded = dec_dense2(h_decoded)
+        h_decoded = dec_dense3(h_decoded) # [!] Adaugă stratul suplimentar
+        _decoded = dec_out(h_decoded)
         decoder = Model(latent_inputs, _decoded)
 
         return encoder, decoder, vae
 
-    def generate(self, n_samples):
-        z = np.random.normal(size=(n_samples, 2))
-        return self.decoder.predict(z)
+    def generate(self, n_samples, noise_level=0.02): # [!] Creste nivelul de zgomot
+        z = np.random.normal(size=(n_samples, self.latent_dim))
+        generated = self.decoder.predict(z)
+        return generated + np.random.normal(0, noise_level, generated.shape)
+
 
 
 def augment_class(X_class, n_samples):
     vae = VAE(X_class.shape[1])
-    vae.vae.fit(X_class, epochs=100, batch_size=32, verbose=0)
+    vae.vae.fit(X_class, epochs=500, batch_size=8, verbose=0) # [!] Crește numărul de epoci
     return vae.generate(n_samples)
 
 
@@ -193,53 +214,73 @@ def main():
 
     # Separați X de etichetă y
     X = df.drop('Behavior_Risk_Level', axis=1)
-    y = df['Behavior_Risk_Level'].values
+    y = df['Behavior_Risk_Level'].values  # Valorile binare (0/1)
 
-    # Aplicăm transformările
+    # Aplicăm SMOTE pentru echilibrare
     X_processed = preprocessor.fit_transform(X)
-    X_res, y_res = apply_smote(X_processed, y)
+    X_smote, y_smote = apply_smote(X_processed, y)
 
-    # Full inverse transform
-    X_inversed = full_inverse_transform(preprocessor, X_res, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols)
+    # Definire VAE cu dimensiunea corectă
+    input_dim = X_processed.shape[1]
+    vae = VAE(input_dim=input_dim)
 
-    # Obține numele coloanelor finale (folosind numele nominale originale, nu one-hot)
+    # Aplicăm VAE pe fiecare clasă pentru augmentare suplimentară
+    X_class0 = X_smote[y_smote == 0]
+    X_class1 = X_smote[y_smote == 1]
+
+    # Generăm date sintetice: 50% din dimensiunea inițială a fiecărei clase
+    synthetic_ratio = 0.5
+    synthetic0 = augment_class(X_class0, int(len(X_class0) * synthetic_ratio))
+    synthetic1 = augment_class(X_class1, int(len(X_class1) * synthetic_ratio))
+
+    # Combinăm datele SMOTE + VAE
+    X_final = np.vstack([X_smote, synthetic0, synthetic1])
+    y_final = np.hstack([y_smote, np.zeros(len(synthetic0)), np.ones(len(synthetic1))])
+
+    # Transformare inversă pentru a reveni la formatul original
+    X_inversed = full_inverse_transform(
+        preprocessor,
+        X_final,
+        numerical_cols,
+        ordinal_cols,
+        nominal_cols,
+        passthrough_cols
+    )
+
+    # Construim coloanele finale
+    nom_features = preprocessor.named_transformers_['nom'].get_feature_names_out(nominal_cols)
     final_columns = numerical_cols + ordinal_cols + nominal_cols + passthrough_cols
 
-    # Verificare finală a numărului de coloane
-    if len(final_columns) != X_inversed.shape[1]:
-        raise ValueError(f"Așteptat: {len(final_columns)} coloane, dar am primit {X_inversed.shape[1]}.")
+    # Verificare dimensiuni
+    if X_inversed.shape[1] != len(final_columns):
+        raise ValueError(f"Discrepanță coloane: {X_inversed.shape[1]} vs {len(final_columns)}")
 
-    df_final = pd.DataFrame(data=X_inversed, columns=final_columns)
+    df_final = pd.DataFrame(X_inversed, columns=final_columns)
 
-    # Post-procesare:
-    # 1. Pentru "Age": rotunjim la cel mai apropiat număr întreg.
-    df_final['Age'] = df_final['Age'].round(0).astype(int)
+    # Post-procesare obligatorie
+    # 1. Rotunjire coloane numerice
+    df_final['Age'] = df_final['Age'].round().astype(int)
+    df_final['Income_Category'] = (df_final['Income_Category']/100).round().astype(int)*100
+    df_final['Essential_Needs_Percentage'] = (df_final['Essential_Needs_Percentage']/5).round().astype(int)*5
 
-    # 2. Pentru "Income_Category": rotunjim la cel mai apropiat multiplu de 100.
-    df_final['Income_Category'] = (df_final['Income_Category'] / 100).round(0) * 100
-    df_final['Income_Category'] = df_final['Income_Category'].astype(int)
-
-    # 3. Pentru "Essential_Needs_Percentage": rotunjim la cel mai apropiat multiplu de 5.
-    df_final['Essential_Needs_Percentage'] = (df_final['Essential_Needs_Percentage'] / 5).round(0) * 5
-    df_final['Essential_Needs_Percentage'] = df_final['Essential_Needs_Percentage'].astype(int)
-
-    # 4. Rotunjim coloanele binare (passthrough) la 0 sau 1
+    # 2. Coloane binare (0/1)
     for col in passthrough_cols:
         df_final[col] = df_final[col].round().astype(int)
 
-    # 5. Pentru coloanele de durată, convertim valorile numerice în formatul inițial.
-    for col in ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech', 'Product_Lifetime_Appliances',
-                'Product_Lifetime_Cars']:
-        df_final[col] = df_final[col].apply(lambda x: f"{int(x)} months" if x < 12 else f"{int(x // 12)} years")
+    # 3. Formatare durate
+    duration_cols = ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
+                    'Product_Lifetime_Appliances', 'Product_Lifetime_Cars']
+    for col in duration_cols:
+        df_final[col] = df_final[col].apply(lambda x: f"{int(x)} months" if x < 12 else f"{int(x//12)} years")
 
-    # Adăugăm etichetele
-    df_final['Behavior_Risk_Level'] = y_res
-    df_final['Risk_Label'] = df_final['Behavior_Risk_Level'].map({0: 'Beneficially', 1: 'Risky'})
+    # Adăugare etichete
+    df_final['Behavior_Risk_Level'] = y_final
+    print("\nDistribuția finală a claselor:")
 
-    # Salvăm setul de date final
-    df_final.to_csv('dataset_augmentatVAE+SMOTE.csv', index=False)
-    print("Datasetul a fost salvat cu succes!")
 
+    # Salvare
+    df_final.to_csv('dataset_augmentat_SMOTE+VAE.csv', index=False)
+    print("\nDatasetul augmentat a fost salvat cu succes!")
 
 if __name__ == "__main__":
     main()
