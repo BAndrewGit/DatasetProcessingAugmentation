@@ -35,6 +35,23 @@ def convert_duration(s):
 
 
 def preprocess_data(df):
+    savings_goal_cols = ['Savings_Goal_Emergency_Fund', 'Savings_Goal_Major_Purchases',
+                         'Savings_Goal_Child_Education', 'Savings_Goal_Vacation',
+                         'Savings_Goal_Retirement', 'Savings_Goal_Other']
+
+    savings_obstacle_cols = ['Savings_Obstacle_Insufficient_Income', 'Savings_Obstacle_Other_Expenses',
+                             'Savings_Obstacle_Not_Priority', 'Savings_Obstacle_Other']
+
+    expense_dist_cols = ['Expense_Distribution_Food', 'Expense_Distribution_Housing',
+                         'Expense_Distribution_Transport', 'Expense_Distribution_Entertainment',
+                         'Expense_Distribution_Health', 'Expense_Distribution_Personal_Care',
+                         'Expense_Distribution_Child_Education', 'Expense_Distribution_Other']
+
+    credit_cols = ['Credit_Essential_Needs', 'Credit_Major_Purchases',
+                   'Credit_Unexpected_Expenses', 'Credit_Personal_Needs', 'Credit_Never_Used']
+
+    passthrough_cols = savings_goal_cols + savings_obstacle_cols + expense_dist_cols + credit_cols
+
     # Coloanele pentru durate
     duration_cols = ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
                      'Product_Lifetime_Appliances', 'Product_Lifetime_Cars']
@@ -70,10 +87,11 @@ def preprocess_data(df):
     preprocessor = ColumnTransformer([
         ('num', StandardScaler(), numerical_cols),
         ('ord', OrdinalEncoder(categories=[['Very rarely', 'Rarely', 'Sometimes', 'Often', 'Very often']]), ordinal_cols),
-        ('nom', OneHotEncoder(sparse_output=False, handle_unknown='ignore'), nominal_cols)
+        ('nom', OneHotEncoder(sparse_output=False, handle_unknown='ignore'), nominal_cols),
+        ('pass', 'passthrough', passthrough_cols)
     ])
 
-    return preprocessor, numerical_cols, ordinal_cols, nominal_cols
+    return preprocessor, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols
 
 
 ###############################
@@ -143,23 +161,26 @@ def augment_class(X_class, n_samples):
 # Funcții pentru inverse transform (la formatul encoded final)
 ###############################
 
-def full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, nominal_cols):
+def full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols):
+    # Inversează transformările pentru fiecare segment
     n_num = len(numerical_cols)
     n_ord = len(ordinal_cols)
-    X_num_inv = preprocessor.named_transformers_['num'].inverse_transform(X_final[:, :n_num])
-    X_ord_inv = preprocessor.named_transformers_['ord'].inverse_transform(X_final[:, n_num:n_num+n_ord])
-    # Segmentul one-hot: se preia direct și se rotunjește (asigurând 0 sau 1)
-    X_nom = X_final[:, n_num+n_ord:]
-    X_nom = np.rint(X_nom)
-    return np.hstack([X_num_inv, X_ord_inv, X_nom])
+    n_nom = preprocessor.named_transformers_['nom'].get_feature_names_out(nominal_cols).shape[0]
+    n_pass = len(passthrough_cols)
 
+    # Extrage segmentele
+    X_num = X_final[:, :n_num]
+    X_ord = X_final[:, n_num:n_num + n_ord]
+    X_nom = X_final[:, n_num + n_ord:n_num + n_ord + n_nom]
+    X_pass = X_final[:, n_num + n_ord + n_nom:]  # Passthrough este ultimul segment
 
-def get_onehot_feature_names(nominal_cols, transformer):
-    names = []
-    for col, cats in zip(nominal_cols, transformer.categories_):
-        for cat in cats:
-            names.append(f"{col}_{cat}")
-    return names
+    # Inversează transformările
+    X_num_inv = preprocessor.named_transformers_['num'].inverse_transform(X_num)
+    X_ord_inv = preprocessor.named_transformers_['ord'].inverse_transform(X_ord)
+    X_nom_inv = preprocessor.named_transformers_['nom'].inverse_transform(X_nom)  # Returnează coloanele nominale originale (string)
+
+    # Combină toate segmentele
+    return np.hstack([X_num_inv, X_ord_inv, X_nom_inv, X_pass])
 
 
 ###############################
@@ -168,32 +189,25 @@ def get_onehot_feature_names(nominal_cols, transformer):
 
 def main():
     df = load_dataset('DatasetOriginal.csv')
-    preprocessor, numerical_cols, ordinal_cols, nominal_cols = preprocess_data(df)
+    preprocessor, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols = preprocess_data(df)
 
     # Separați X de etichetă y
     X = df.drop('Behavior_Risk_Level', axis=1)
-    y = df['Behavior_Risk_Level'].astype('category').cat.codes
+    y = df['Behavior_Risk_Level'].values
 
     # Aplicăm transformările
     X_processed = preprocessor.fit_transform(X)
     X_res, y_res = apply_smote(X_processed, y)
 
-    # Pentru moment, comentăm apelul lui VAE pentru a folosi doar datele provenite din SMOTE
-    # X_class0 = X_res[y_res == 0]
-    # X_class1 = X_res[y_res == 1]
-    # synthetic0 = augment_class(X_class0, len(X_class0))
-    # synthetic1 = augment_class(X_class1, len(X_class1))
-    # X_final = np.vstack([X_res, synthetic0, synthetic1])
-    # y_final = np.hstack([y_res, np.zeros(len(synthetic0)), np.ones(len(synthetic1))])
-    X_final = X_res
-    y_final = y_res
+    # Full inverse transform
+    X_inversed = full_inverse_transform(preprocessor, X_res, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols)
 
-    # Full inverse transform (pentru segmentele numerice și ordinale) și păstrăm segmentul one-hot
-    X_inversed = full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, nominal_cols)
-    final_columns = numerical_cols + ordinal_cols + get_onehot_feature_names(nominal_cols, preprocessor.named_transformers_['nom'])
+    # Obține numele coloanelor finale (folosind numele nominale originale, nu one-hot)
+    final_columns = numerical_cols + ordinal_cols + nominal_cols + passthrough_cols
 
-    if X_inversed.shape[1] != len(final_columns):
-        raise ValueError(f"Numărul de coloane obținut ({X_inversed.shape[1]}) nu corespunde cu numărul de coloane dorit ({len(final_columns)}).")
+    # Verificare finală a numărului de coloane
+    if len(final_columns) != X_inversed.shape[1]:
+        raise ValueError(f"Așteptat: {len(final_columns)} coloane, dar am primit {X_inversed.shape[1]}.")
 
     df_final = pd.DataFrame(data=X_inversed, columns=final_columns)
 
@@ -202,26 +216,29 @@ def main():
     df_final['Age'] = df_final['Age'].round(0).astype(int)
 
     # 2. Pentru "Income_Category": rotunjim la cel mai apropiat multiplu de 100.
-    df_final['Income_Category'] = (df_final['Income_Category'] / 100).round().astype(int) * 100
+    df_final['Income_Category'] = (df_final['Income_Category'] / 100).round(0) * 100
+    df_final['Income_Category'] = df_final['Income_Category'].astype(int)
 
     # 3. Pentru "Essential_Needs_Percentage": rotunjim la cel mai apropiat multiplu de 5.
-    df_final['Essential_Needs_Percentage'] = (df_final['Essential_Needs_Percentage'] / 5).round().astype(int) * 5
+    df_final['Essential_Needs_Percentage'] = (df_final['Essential_Needs_Percentage'] / 5).round(0) * 5
+    df_final['Essential_Needs_Percentage'] = df_final['Essential_Needs_Percentage'].astype(int)
 
-    # 4. Coloanele one-hot sunt deja rotunjite (0 sau 1) din full_inverse_transform.
+    # 4. Rotunjim coloanele binare (passthrough) la 0 sau 1
+    for col in passthrough_cols:
+        df_final[col] = df_final[col].round().astype(int)
 
     # 5. Pentru coloanele de durată, convertim valorile numerice în formatul inițial.
     for col in ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech', 'Product_Lifetime_Appliances',
                 'Product_Lifetime_Cars']:
         df_final[col] = df_final[col].apply(lambda x: f"{int(x)} months" if x < 12 else f"{int(x // 12)} years")
 
-    # Adăugăm eticheta de comportament de risc
-    df_final['Behavior_Risk_Level'] = pd.Series(y_final).map({
-        0: df['Behavior_Risk_Level'].unique()[0],
-        1: df['Behavior_Risk_Level'].unique()[1]
-    })
+    # Adăugăm etichetele
+    df_final['Behavior_Risk_Level'] = y_res
+    df_final['Risk_Label'] = df_final['Behavior_Risk_Level'].map({0: 'Beneficially', 1: 'Risky'})
 
-    df_final.to_csv('dataset_augmentatVAE.csv', index=False)
-    print("Datasetul augmentat a fost salvat ca 'dataset_augmentatVAE.csv'.")
+    # Salvăm setul de date final
+    df_final.to_csv('dataset_augmentatVAE+SMOTE.csv', index=False)
+    print("Datasetul a fost salvat cu succes!")
 
 
 if __name__ == "__main__":
