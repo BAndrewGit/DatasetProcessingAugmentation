@@ -88,6 +88,7 @@ def apply_smote(X, y):
     return smote.fit_resample(X, y)
 
 
+# Clasa VAE este definită, însă apelul său este comentat pentru moment
 class VAE:
     def __init__(self, input_dim):
         self.input_dim = input_dim
@@ -143,11 +144,6 @@ def augment_class(X_class, n_samples):
 ###############################
 
 def full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, nominal_cols):
-    """
-    Se inversează transformările pentru segmentele numerice și ordinale,
-    iar segmentul pentru coloanele nominale se preia direct (deoarece dorim să păstrăm
-    codificarea one-hot), după care se rotunjește la 0 sau 1.
-    """
     n_num = len(numerical_cols)
     n_ord = len(ordinal_cols)
     X_num_inv = preprocessor.named_transformers_['num'].inverse_transform(X_final[:, :n_num])
@@ -182,15 +178,15 @@ def main():
     X_processed = preprocessor.fit_transform(X)
     X_res, y_res = apply_smote(X_processed, y)
 
-    # Generăm date sintetice pentru fiecare clasă folosind VAE
-    X_class0 = X_res[y_res == 0]
-    X_class1 = X_res[y_res == 1]
-    synthetic0 = augment_class(X_class0, len(X_class0))
-    synthetic1 = augment_class(X_class1, len(X_class1))
-
-    # Combinăm datele originale cu cele sintetice
-    X_final = np.vstack([X_res, synthetic0, synthetic1])
-    y_final = np.hstack([y_res, np.zeros(len(synthetic0)), np.ones(len(synthetic1))])
+    # Pentru moment, comentăm apelul lui VAE pentru a folosi doar datele provenite din SMOTE
+    # X_class0 = X_res[y_res == 0]
+    # X_class1 = X_res[y_res == 1]
+    # synthetic0 = augment_class(X_class0, len(X_class0))
+    # synthetic1 = augment_class(X_class1, len(X_class1))
+    # X_final = np.vstack([X_res, synthetic0, synthetic1])
+    # y_final = np.hstack([y_res, np.zeros(len(synthetic0)), np.ones(len(synthetic1))])
+    X_final = X_res
+    y_final = y_res
 
     # Full inverse transform (pentru segmentele numerice și ordinale) și păstrăm segmentul one-hot
     X_inversed = full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, nominal_cols)
@@ -206,13 +202,14 @@ def main():
     df_final['Age'] = df_final['Age'].round(0).astype(int)
 
     # 2. Pentru "Income_Category": rotunjim la cel mai apropiat multiplu de 100.
-    df_final['Income_Category'] = (df_final['Income_Category'] / 100).round(0) * 100
-    df_final['Income_Category'] = df_final['Income_Category'].astype(int)
+    df_final['Income_Category'] = (df_final['Income_Category'] / 100).round().astype(int) * 100
 
-    # 3. Pentru coloanele one-hot (din segmentul nominal): valorile ar trebui să fie 0 sau 1,
-    #    dar le-am rotunjit deja cu np.rint în full_inverse_transform.
+    # 3. Pentru "Essential_Needs_Percentage": rotunjim la cel mai apropiat multiplu de 5.
+    df_final['Essential_Needs_Percentage'] = (df_final['Essential_Needs_Percentage'] / 5).round().astype(int) * 5
 
-    # 4. Pentru coloanele de durată, convertim valorile numerice în formatul inițial.
+    # 4. Coloanele one-hot sunt deja rotunjite (0 sau 1) din full_inverse_transform.
+
+    # 5. Pentru coloanele de durată, convertim valorile numerice în formatul inițial.
     for col in ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech', 'Product_Lifetime_Appliances',
                 'Product_Lifetime_Cars']:
         df_final[col] = df_final[col].apply(lambda x: f"{int(x)} months" if x < 12 else f"{int(x // 12)} years")
