@@ -140,7 +140,7 @@ def preprocess_data(df):
         nominal_cols = [
             'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
             'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
-            'Financial_Investments', 'Savings_Obstacle'
+            'Financial_Investments'
         ]
 
         # Filtrăm doar coloanele existente

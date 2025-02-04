@@ -63,10 +63,6 @@ def normalize_and_translate_data(df):
         "Planific bugetul în detaliu": "Plan budget in detail",
         "Planific doar lucrurile esențiale": "Plan only essentials",
         "Nu planific deloc": "Don't plan at all",
-        "Altul": "Another",
-        "Venitul este insuficient": "Income is insufficient",
-        "Alte cheltuieli urgente au prioritate": "Other urgent expenses take priority",
-        "Nu consider economiile o prioritate": "I don't consider savings a priority",
         "Recompensă personală („merit acest lucru”)": "Self-reward",
         "Reduceri sau promoții": "Discounts or promotions",
         "Presiuni sociale („toți prietenii au acest lucru”)": "Social pressure",
@@ -126,11 +122,6 @@ def normalize_and_translate_data(df):
     if "Impulse_Buying_Reason" in df.columns:
         df["Impulse_Buying_Reason"] = df["Impulse_Buying_Reason"].replace(impulse_r_map)
 
-    # Traducem `Savings_Obstacle`
-    obstacle_map = {"Altceva": "Other"}
-    if "Savings_Obstacle" in df.columns:
-        df["Savings_Obstacle"] = df["Savings_Obstacle"].replace(obstacle_map)
-
     # 4) Dicționare pentru coloanele multi-value (fiecare coloană are map-ul său)
     savings_map = {
         "Economii pentru achiziții majore (locuință, mașină)": "Savings_Goal_Major_Purchases",
@@ -152,6 +143,13 @@ def normalize_and_translate_data(df):
         "Alte cheltuieli": "Expense_Distribution_Other"
     }
 
+    savings_obstacle_map = {
+        "Altceva": "Savings_Obstacle_Other",
+        "Venitul este insuficient": "Savings_Obstacle_Insufficient_Income",
+        "Alte cheltuieli urgente au prioritate": "Savings_Obstacle_Other_Expenses",
+        "Nu consider economiile o prioritate": "SSavings_Obstacle_Not_Priority"
+    }
+
     credit_map = {
         "Da, pentru cheltuieli esențiale (locuință, hrană)": "Credit_Essential_Needs",
         "Da, pentru cheltuieli mari (ex. vacanțe, electronice)": "Credit_Major_Purchases",
@@ -169,6 +167,12 @@ def normalize_and_translate_data(df):
             "Savings_Goal_Vacation",
             "Savings_Goal_Retirement",
             "Savings_Goal_Other"
+        ],
+        "Savings_Obstacle": [
+            "Savings_Obstacle_Insufficient_Income",
+            "Savings_Obstacle_Other_Expenses",
+            "Savings_Obstacle_Not_Priority",
+            "Savings_Obstacle_Other"
         ],
         "Expense_Distribution": [
             "Expense_Distribution_Food",
@@ -192,6 +196,7 @@ def normalize_and_translate_data(df):
     # 6) One-hot maps (folosite la translate) - cheie = numele coloanei, valoare = map dedicat
     one_hot_maps = {
         "Savings_Goal": savings_map,
+        "Savings_Obstacle": savings_obstacle_map,
         "Expense_Distribution": expense_map,
         "Credit_Usage": credit_map
     }
@@ -546,6 +551,25 @@ def save_files(df):
     else:
         print("No save location selected.")
 
+def check_nan_values(df):
+    """Verifică și afișează valorile NaN din DataFrame."""
+    nan_info = df.isna().sum()
+    nan_columns = nan_info[nan_info > 0]  # Filtrează doar coloanele cu NaN
+
+    if len(nan_columns) == 0:
+        print("\n>>> INFO: Nu există valori NaN în date.")
+        return
+
+    print("\n>>> ATENȚIE: Au fost detectate valori NaN în următoarele coloane:")
+    for col, count in nan_columns.items():
+        print(f"- Coloana '{col}': {count} valori NaN")
+
+    # Afișează primele 5 rânduri cu NaN pentru fiecare coloană
+    for col in nan_columns.index:
+        nan_rows = df[df[col].isna()]
+        print(f"\nPrimele 5 rânduri cu NaN în coloana '{col}':")
+        print(nan_rows.head(5))
+
 
 def main():
     # Ascundem fereastra principală Tkinter
@@ -607,6 +631,10 @@ def main():
         # Debug pentru coloane după procesare
         print("\n>>> DEBUG: Columns AFTER processing:")
         print(df.columns)
+
+        # Verificare NaN înainte de salvare
+        print("\n>>> Verificare valori NaN...")
+        check_nan_values(df_original)
 
         print("\n>>> Saving processed data...")
         save_files(df_original)
