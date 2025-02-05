@@ -108,7 +108,7 @@ def apply_smote(X, y):
 
 
 class VAE:
-    def __init__(self, input_dim, latent_dim=64): # [!] Crește latent_dim
+    def __init__(self, input_dim, latent_dim=512): # [!] Crește latent_dim
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.encoder, self.decoder, self.vae = self._build_model()
@@ -119,8 +119,8 @@ class VAE:
 
         # ENCODER
         x = Dense(128, activation='relu')(inputs)
-        x = GaussianNoise(0.2)(x) # Adăugăm zgomot
-        x = Dropout(0.6)(x)
+        x = GaussianNoise(0.9)(x) # Adăugăm zgomot
+        x = Dropout(0.9)(x)
         z_mean = Dense(self.latent_dim)(x)
         z_log_var = Dense(self.latent_dim)(x)
 
@@ -128,27 +128,29 @@ class VAE:
         def sampling(args):
             z_mean, z_log_var = args
             epsilon = K.random_normal(shape=(K.shape(z_mean)[0], self.latent_dim))
-            return z_mean + K.exp(1.2 * z_log_var) * epsilon  # [!] Crește coeficientul
+            return z_mean + K.exp(2.6 * z_log_var) * epsilon  # [!] Crește coeficientul
 
         z = Lambda(sampling)([z_mean, z_log_var])
 
         # DECODER - CREAREA STRATURILOR DECODERULUI (le salvăm în variabile)
-        dec_dense1 = Dense(128, activation='relu')
-        dec_dense2 = Dense(64, activation='relu')
-        dec_dense3 = Dense(64, activation='relu') # [!] Adaugă un strat suplimentar
+        dec_dense1 = Dense(256, activation='relu')
+        dec_dense2 = Dense(128, activation='relu')
+        dec_dense3 = Dense(64, activation='relu')
+        dec_dense4 = Dense(32, activation='relu')# [!] Adaugă un strat suplimentar
         dec_out = Dense(self.input_dim)  # Fără activare finală sau cu activare adecvată pentru datele tale
 
         # Aplicăm straturile asupra lui z pentru modelul VAE:
         d = dec_dense1(z)
         d = dec_dense2(d)
-        d = dec_dense3(d) # [!] Adaugă stratul suplimentar
+        d = dec_dense3(d)
+        d = dec_dense4(d)# [!] Adaugă stratul suplimentar
         outputs = dec_out(d)
 
 
         # MODELE
         vae = Model(inputs, outputs)
         reconstruction_loss = K.mean(K.square(inputs - outputs))
-        kl_loss = -0.1 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1) # [!] Scade KL loss
+        kl_loss = -0.03 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1) # [!] Scade KL loss
         vae.add_loss(K.mean(reconstruction_loss + 0.05 * kl_loss))
         vae.compile(optimizer=Adam(0.0001)) # [!] Scade rata de învățare
 
@@ -159,13 +161,14 @@ class VAE:
         latent_inputs = Input(shape=(self.latent_dim,))
         h_decoded = dec_dense1(latent_inputs)
         h_decoded = dec_dense2(h_decoded)
-        h_decoded = dec_dense3(h_decoded) # [!] Adaugă stratul suplimentar
+        h_decoded = dec_dense3(h_decoded)
+        h_decoded = dec_dense4(h_decoded)# [!] Adaugă stratul suplimentar
         _decoded = dec_out(h_decoded)
         decoder = Model(latent_inputs, _decoded)
 
         return encoder, decoder, vae
 
-    def generate(self, n_samples, noise_level=0.02): # [!] Creste nivelul de zgomot
+    def generate(self, n_samples, noise_level=0.09): # [!] Creste nivelul de zgomot
         z = np.random.normal(size=(n_samples, self.latent_dim))
         generated = self.decoder.predict(z)
         return generated + np.random.normal(0, noise_level, generated.shape)
@@ -174,7 +177,7 @@ class VAE:
 
 def augment_class(X_class, n_samples):
     vae = VAE(X_class.shape[1])
-    vae.vae.fit(X_class, epochs=500, batch_size=8, verbose=0) # [!] Crește numărul de epoci
+    vae.vae.fit(X_class, epochs=1000, batch_size=8, verbose=0) # [!] Crește numărul de epoci
     return vae.generate(n_samples)
 
 
@@ -221,15 +224,15 @@ def main():
     X_smote, y_smote = apply_smote(X_processed, y)
 
     # Definire VAE cu dimensiunea corectă
-    input_dim = X_processed.shape[1]
-    vae = VAE(input_dim=input_dim)
+    #input_dim = X_processed.shape[1]
+    #vae = VAE(input_dim=input_dim)
 
     # Aplicăm VAE pe fiecare clasă pentru augmentare suplimentară
     X_class0 = X_smote[y_smote == 0]
     X_class1 = X_smote[y_smote == 1]
 
     # Generăm date sintetice: 50% din dimensiunea inițială a fiecărei clase
-    synthetic_ratio = 0.5
+    synthetic_ratio = 5.5
     synthetic0 = augment_class(X_class0, int(len(X_class0) * synthetic_ratio))
     synthetic1 = augment_class(X_class1, int(len(X_class1) * synthetic_ratio))
 
