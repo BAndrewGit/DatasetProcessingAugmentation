@@ -271,6 +271,13 @@ def train_models(df):
                 'model': model
             }
 
+            # Salvare coeficienți în metrici.json
+            if 'LogisticRegression' in results and 'coefficients' in results['LogisticRegression']:
+                with open("metrici.json", "w") as f:
+                    json.dump(results['LogisticRegression']['coefficients'], f, indent=4)
+
+            print("\nCoeficienții Logistic Regression au fost salvați")
+
             # Plot matrice de confuzie
             disp = ConfusionMatrixDisplay(confusion_matrix(y_test, y_pred, normalize='true'),
                                           display_labels=['Beneficially', 'Risky'])
@@ -395,7 +402,7 @@ def visualize_data(df):
 
 
 def save_metrics(results):
-    """Salvează metricile în fișier JSON, inclusiv rapoartele pentru toate modelele."""
+    """Salvează metricile în fișier JSON, inclusiv coeficienții Logistic Regression."""
     try:
         metrics = {}
         for name, res in results.items():
@@ -406,6 +413,9 @@ def save_metrics(results):
                 'cv_f1_mean': res['cv_f1_mean'],
                 'cv_f1_std': res['cv_f1_std']
             }
+            # Adăugăm coeficienții Logistic Regression dacă există în rezultate
+            if 'logreg_coefficients' in res:
+                metrics[name]['logreg_coefficients'] = res['logreg_coefficients']
 
         with open('dataset_metrics.json', 'w') as f:
             json.dump(metrics, f, indent=2)
@@ -414,6 +424,7 @@ def save_metrics(results):
 
     except Exception as e:
         print(f"Eroare la salvarea metricilor: {str(e)}")
+
 
 
 ###############################
