@@ -1,38 +1,91 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sdv.single_table import CTGANSynthesizer
+from sdv.metadata import SingleTableMetadata
+from CTGAN.ctgan.synthesizers.ctgan import CTGAN
 
 
+# Funcție pentru definirea metadata-ului
+def define_metadata(df):
+    metadata = SingleTableMetadata()
+
+    # Definirea sdtype pentru fiecare coloană
+    column_types = {
+        'Age': 'numerical',
+        'Family_Status': 'categorical',
+        'Gender': 'categorical',
+        'Income_Category': 'categorical',
+        'Essential_Needs_Percentage': 'numerical',
+        'Financial_Attitude': 'categorical',
+        'Budget_Planning': 'categorical',
+        'Save_Money': 'categorical',
+        'Savings_Obstacle': 'categorical',
+        'Product_Lifetime_Clothing': 'categorical',
+        'Product_Lifetime_Tech': 'categorical',
+        'Product_Lifetime_Appliances': 'categorical',
+        'Product_Lifetime_Cars': 'categorical',
+        'Impulse_Buying_Frequency': 'categorical',
+        'Impulse_Buying_Category': 'categorical',
+        'Impulse_Buying_Reason': 'categorical',
+        'Debt_Level': 'numerical',
+        'Financial_Investments': 'categorical',
+        'Bank_Account_Analysis_Frequency': 'categorical',
+        'Savings_Goal_Emergency_Fund': 'categorical',
+        'Savings_Goal_Major_Purchases': 'categorical',
+        'Savings_Goal_Child_Education': 'categorical',
+        'Savings_Goal_Vacation': 'categorical',
+        'Savings_Goal_Retirement': 'categorical',
+        'Savings_Goal_Other': 'categorical',
+        'Expense_Distribution_Food': 'numerical',
+        'Expense_Distribution_Housing': 'numerical',
+        'Expense_Distribution_Transport': 'numerical',
+        'Expense_Distribution_Entertainment': 'numerical',
+        'Expense_Distribution_Health': 'numerical',
+        'Expense_Distribution_Personal_Care': 'numerical',
+        'Expense_Distribution_Child_Education': 'numerical',
+        'Expense_Distribution_Other': 'numerical',
+        'Credit_Essential_Needs': 'categorical',
+        'Credit_Major_Purchases': 'categorical',
+        'Credit_Unexpected_Expenses': 'categorical',
+        'Credit_Personal_Needs': 'categorical',
+        'Credit_Never_Used': 'categorical',
+        'Behavior_Risk_Level': 'categorical'
+    }
+
+    # Adăugăm coloanele cu sdtype corespunzător
+    for col, col_type in column_types.items():
+        metadata.add_column(column_name=col, sdtype=col_type)
+
+    return metadata
+
+
+# Funcție pentru antrenarea modelului CTGAN și generarea de date augmentate
+def generate_synthetic_data(df):
+    metadata = define_metadata(df)
+
+    # Crearea unui model CTGAN
+    model = CTGAN(metadata)
+
+    # Antrenarea modelului
+    model.fit(df)
+
+    # Generarea datelor augmentate
+    augmented_data = model.sample()
+
+    return augmented_data
+
+
+# Funcție principală
 def main():
-    df = pd.read_csv('processed_dataset.csv')
-    X = df.drop(columns=['Behavior_Risk_Level'])
-    y = df['Behavior_Risk_Level']
+    # Încarcă datele originale dintr-un fișier CSV
+    df = pd.read_csv('DatasetOriginal.csv')
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
+    # Generează date augmentate folosind GAN
+    augmented_data = generate_synthetic_data(df)
 
-    train_data = pd.concat([X_train, y_train], axis=1)
-
-    categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist() + ['Behavior_Risk_Level']
-
-    ctgan = CTGANSynthesizer(epochs=150)
-    ctgan.fit(train_data, categorical_cols)
-
-    synthetic_samples = ctgan.sample(1000)
-    synthetic_samples = synthetic_samples[synthetic_samples['Behavior_Risk_Level'] == 'Risky']
-
-    X_final = pd.concat([X_train, synthetic_samples.drop(columns=['Behavior_Risk_Level'])])
-    y_final = pd.concat([y_train, synthetic_samples['Behavior_Risk_Level']])
-
-    # Salvarea în CSV și Excel
-    X_final.to_csv('CGAN_augmented.csv', index=False)
-    y_final.to_csv('CGAN_labels.csv', index=False)
-    pd.concat([X_test, y_test], axis=1).to_csv('CGAN_test_set.csv', index=False)
-
-    with pd.ExcelWriter('CGAN_augmented.xlsx') as writer:
-        X_final.to_excel(writer, sheet_name='Date_Augmentate', index=False)
-        y_final.to_excel(writer, sheet_name='Etichete', index=False)
-        pd.concat([X_test, y_test], axis=1).to_excel(writer, sheet_name='Test_Set', index=False)
+    # Salvează datele augmentate într-un fișier CSV
+    augmented_data.to_csv('C-GAN_augmented.csv', index=False)
+    print("Datele augmentate au fost salvate în 'C-GAN_augmented.csv'.")
 
 
+# Apelarea funcției principale
 if __name__ == "__main__":
     main()
