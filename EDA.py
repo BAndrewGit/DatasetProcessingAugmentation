@@ -24,8 +24,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline, make_pipeline
 import json
 import os
-
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 pd.set_option('future.no_silent_downcasting', True)
 
 CONFIG = {
@@ -168,10 +167,11 @@ def train_models(df):
                 n_estimators=150,
                 class_weight='balanced',
                 random_state=42
-            ),
-            'SVM': None
+            )
+            # SVM key will be added based on convergence below
         }
 
+        fallback_flag = False
         print("\nTraining SVM...")
         with warnings.catch_warnings(record=True) as w:
             svm_model = SVC(
@@ -183,7 +183,7 @@ def train_models(df):
             )
             svm_model.fit(X_train, y_train)
 
-            # Check for convergence warnings
+            # If convergence warnings are raised, increase max_iter
             if any(issubclass(warn.category, ConvergenceWarning) for warn in w):
                 print("⚠️ SVM did not converge! Increasing max_iter to 2000...")
                 svm_model = SVC(
@@ -198,18 +198,24 @@ def train_models(df):
                 with warnings.catch_warnings(record=True) as w2:
                     svm_model.fit(X_train, y_train)
                     if any(issubclass(warn.category, ConvergenceWarning) for warn in w2):
-                        print("⚠️ SVM still not converging, switching to SGDClassifier...")
+                        print("⚠️ SVM still not converging, switching to SGDClassifier with calibration...")
                         from sklearn.linear_model import SGDClassifier
-                        svm_model = SGDClassifier(
+                        from sklearn.calibration import CalibratedClassifierCV
+                        base_sgd = SGDClassifier(
                             loss='hinge',
                             max_iter=10000,
                             class_weight='balanced',
                             random_state=42,
                             tol=1e-3
                         )
+                        svm_model = CalibratedClassifierCV(estimator=base_sgd, cv=5)
                         svm_model.fit(X_train, y_train)
+                        fallback_flag = True
 
-        models['SVM'] = svm_model
+        if fallback_flag:
+            models['SGDClassifier'] = svm_model
+        else:
+            models['SVM'] = svm_model
 
         results = {}
 
@@ -233,12 +239,10 @@ def train_models(df):
                 'model': model
             }
 
-            # Save LogisticRegression coefficients
-            if 'LogisticRegression' in results and 'coefficients' in results['LogisticRegression']:
+            if name == 'LogisticRegression':
                 with open("metrici.json", "w") as f:
-                    json.dump(results['LogisticRegression']['coefficients'], f, indent=4)
-
-            print("\nLogistic Regression coefficients have been saved")
+                    json.dump(model.coef_.tolist(), f, indent=4)
+                print("\nLogistic Regression coefficients have been saved")
 
             # Plot confusion matrix
             disp = ConfusionMatrixDisplay(
@@ -310,13 +314,8 @@ def visualize_data(df):
         plt.legend(title='Risk Level')
         plt.show()
 
-        # 3. Pairplot for risk factors
-        if len(df_viz['Behavior_Risk_Label'].unique()) > 1:
-            sns.pairplot(df_viz, vars=risk_factors, hue='Behavior_Risk_Label', palette='husl')
-            plt.suptitle('Pairplot: Relationships between Risk Factors', y=1.02)
-            plt.show()
 
-        # 4. Correlation Heatmap
+        # 3. Correlation Heatmap
         numeric_cols = ['Age', 'Essential_Needs_Percentage', 'Debt_Level']
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -327,9 +326,19 @@ def visualize_data(df):
         plt.tight_layout()
         plt.show()
 
-        # Pairplot of numeric columns
-        sns.pairplot(df, hue='Behavior_Risk_Level', vars=numeric_cols, palette='husl')
+        # 4. Pairplot for risk factors (categorical or mixed columns)
+        if len(df_viz['Behavior_Risk_Label'].unique()) > 1:
+            pairplot = sns.pairplot(df_viz, vars=risk_factors, hue='Behavior_Risk_Label', palette='husl')
+            pairplot.fig.subplots_adjust(top=0.92)
+            pairplot.fig.suptitle('Pairplot: Distribution of Risk Factors', fontsize=16)
+            plt.show()
+
+        # Pairplot for numeric columns only
+        pairplot_numeric = sns.pairplot(df, hue='Behavior_Risk_Level', vars=numeric_cols, palette='husl')
+        pairplot_numeric.fig.subplots_adjust(top=0.92)
+        pairplot_numeric.fig.suptitle('Pairplot: Relationships Among Numeric Features', fontsize=16)
         plt.show()
+
 
         # 5. Learning curve for Logistic Regression
         from sklearn.linear_model import LogisticRegression
@@ -376,7 +385,7 @@ def visualize_data(df):
         return None
 
 
-def save_metrics(results, overfit_report):
+def save_metrics(results, overfit_report, feature_names):
     try:
         metrics = {}
         for name, res in results.items():
@@ -391,7 +400,11 @@ def save_metrics(results, overfit_report):
                 'overfit_ratio': overfit_report[name]['overfit_ratio']
             }
             if name == 'LogisticRegression':
-                metrics[name]['coefficients'] = res['model'].coef_.tolist()
+                coef_dict = {
+                    feature: coef for feature, coef in zip(feature_names, res['model'].coef_[0])
+                }
+                sorted_coefs = dict(sorted(coef_dict.items(), key=lambda x: abs(x[1]), reverse=True))
+                metrics[name]['coefficients'] = sorted_coefs
 
         with open('dataset_metrics.json', 'w') as f:
             json.dump(metrics, f, indent=2)
@@ -417,7 +430,7 @@ def main():
 
     df_viz = visualize_data(df)
     overfit_report = evaluate_overfitting(models, X_train, X_test, y_train, y_test)
-    save_metrics(results, overfit_report)
+    save_metrics(results, overfit_report, feature_names=X_train.columns)
 
 
 if __name__ == "__main__":
