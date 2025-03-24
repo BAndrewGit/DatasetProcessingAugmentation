@@ -10,7 +10,7 @@ from tkinter import Tk, filedialog
 GLOBAL_RISK_THRESHOLD = None
 
 CONFIG = {
-    'risk_weights': [0.3, 0.25, 0.35, 0.1]
+    'risk_weights': [0.55, 0.21, 0.13, 0.12]
 }
 
 def normalize_and_translate_data(df):
