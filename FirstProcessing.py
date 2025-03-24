@@ -7,8 +7,11 @@ import openpyxl
 import os
 from tkinter import Tk, filedialog
 
+GLOBAL_RISK_THRESHOLD = None
+
 CONFIG = {
-    'risk_weights': [0.3, 0.25, 0.35, 0.1],}
+    'risk_weights': [0.3, 0.25, 0.35, 0.1]
+}
 
 def normalize_and_translate_data(df):
     df.columns = df.columns.str.strip()
@@ -295,23 +298,19 @@ def postprocess_data(df):
         return None
 
 
-def calculate_risk_score(df):
-    """Calculează scorul de risc și etichetele folosind clustering pentru praguri dinamice."""
+def calculate_risk_score(df, threshold=None):
     try:
-        # Asigurăm conversia coloanelor critice la numeric
-        df['Income_Category'] = pd.to_numeric(df['Income_Category'], errors='coerce')
-        df['Essential_Needs_Percentage'] = pd.to_numeric(df['Essential_Needs_Percentage'], errors='coerce')
-        df['Expense_Distribution_Entertainment'] = pd.to_numeric(df['Expense_Distribution_Entertainment'], errors='coerce')
-        df['Debt_Level'] = pd.to_numeric(df['Debt_Level'], errors='coerce')
-        df['Savings_Goal_Emergency_Fund'] = pd.to_numeric(df['Savings_Goal_Emergency_Fund'], errors='coerce')
-
-        # Calculare scor de risc bazat pe condiții
-        is_low_income = df['Income_Category'] < 5000
-        is_high_income = df['Income_Category'] > 7500
+        numeric_cols = [
+            'Income_Category', 'Essential_Needs_Percentage',
+            'Expense_Distribution_Entertainment', 'Debt_Level',
+            'Savings_Goal_Emergency_Fund'
+        ]
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
         conditions = [
-            (is_low_income & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
-            (is_high_income & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
+            ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
+            ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
             (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
             (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
             (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
@@ -319,25 +318,22 @@ def calculate_risk_score(df):
 
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # Normalizare
-        df['Risk_Score_Normalized'] = (df['Risk_Score'] - df['Risk_Score'].mean()) / df['Risk_Score'].std()
+        if threshold is None:
+            from sklearn.cluster import KMeans
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score']])
+            risky_cluster = df.groupby('Cluster_Label')['Risk_Score'].mean().idxmax()
 
-        # Aplicăm clustering K-Means pentru a separa scorurile în 2 grupuri
-        from sklearn.cluster import KMeans
-        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-        df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_Normalized']])
+            # Pragul stabilit dinamic prin KMeans
+            threshold = df[df['Cluster_Label'] == risky_cluster]['Risk_Score'].min()
+            print(f"Pragul dinamic stabilit (KMeans): {threshold:.2f}")
 
-        # Determinăm care cluster are scorurile mai mari – acesta va fi considerat "riscant"
-        risky_cluster = df.groupby('Cluster_Label')['Risk_Score_Normalized'].mean().idxmax()
+        df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
 
-        # Etichetăm: 1 dacă aparține clusterului riscant, altfel 0
-        df['Behavior_Risk_Level'] = np.where(df['Cluster_Label'] == risky_cluster, 1, 0)
-
-        return df
-
+        return df, threshold
     except Exception as e:
-        print(f"Eroare: {e}")
-        return None
+        print(f"Eroare la calculul scorului de risc: {e}")
+        return None, None
 
 
 def auto_adjust_column_width(writer, sheet_name):
@@ -578,6 +574,8 @@ def check_nan_values(df):
 
 
 def main():
+    global GLOBAL_RISK_THRESHOLD
+
     # Ascundem fereastra principală Tkinter
     Tk().withdraw()
 
@@ -597,7 +595,6 @@ def main():
             result = random_essential_needs(val)
             print(f"Input: {val} => Output: {result}")
 
-        # IMPORTANT: Specificăm sep="," și quotechar='"'
         print(f"Loading file: {file_path}")
         df = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
 
@@ -611,34 +608,34 @@ def main():
 
         df_original = df.copy()
 
-        # Apelăm funcțiile suplimentare înainte de salvare
         print("\n>>> Post-processing data...")
         df = postprocess_data(df)
         if df is None:
             return
 
         print("\n>>> Calculating risk score...")
-        df = calculate_risk_score(df)
+        df, GLOBAL_RISK_THRESHOLD = calculate_risk_score(df)
+
         if df is None:
             return
 
-        print("\nDistribuție inițială risc:")
+        print(f"\n🔹 Pragul global stabilit și salvat: {GLOBAL_RISK_THRESHOLD:.2f}")
+
+        print("\nRisk distribution:")
         print(df['Behavior_Risk_Level'].value_counts(dropna=False))
 
         if len(df['Behavior_Risk_Level'].unique()) == 1:
             print("\nNu există suficiente variante de risc pentru analiză!")
             print("Posibile soluții:")
             print("- Ajustați ponderile din CONFIG['risk_weights']")
-            print("- Modificați CONFIG['dynamic_threshold']")
+            print("- Revedeți datele de intrare")
             return
 
         df_original['Behavior_Risk_Level'] = df['Behavior_Risk_Level']
 
-        # Debug pentru coloane după procesare
         print("\n>>> DEBUG: Columns AFTER processing:")
         print(df.columns)
 
-        # Verificare NaN înainte de salvare
         print("\n>>> Verificare valori NaN...")
         check_nan_values(df_original)
 
@@ -649,7 +646,6 @@ def main():
 
     except Exception as e:
         print(f"An error occurred during processing: {e}")
-
 
 if __name__ == "__main__":
     main()
