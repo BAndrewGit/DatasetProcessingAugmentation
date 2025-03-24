@@ -298,7 +298,14 @@ def postprocess_data(df):
 def calculate_risk_score(df):
     """Calculează scorul de risc și etichetele folosind clustering pentru praguri dinamice."""
     try:
-        # Calculare scor de risc similar
+        # Asigurăm conversia coloanelor critice la numeric
+        df['Income_Category'] = pd.to_numeric(df['Income_Category'], errors='coerce')
+        df['Essential_Needs_Percentage'] = pd.to_numeric(df['Essential_Needs_Percentage'], errors='coerce')
+        df['Expense_Distribution_Entertainment'] = pd.to_numeric(df['Expense_Distribution_Entertainment'], errors='coerce')
+        df['Debt_Level'] = pd.to_numeric(df['Debt_Level'], errors='coerce')
+        df['Savings_Goal_Emergency_Fund'] = pd.to_numeric(df['Savings_Goal_Emergency_Fund'], errors='coerce')
+
+        # Calculare scor de risc bazat pe condiții
         is_low_income = df['Income_Category'] < 5000
         is_high_income = df['Income_Category'] > 7500
 
@@ -316,13 +323,14 @@ def calculate_risk_score(df):
         df['Risk_Score_Normalized'] = (df['Risk_Score'] - df['Risk_Score'].mean()) / df['Risk_Score'].std()
 
         # Aplicăm clustering K-Means pentru a separa scorurile în 2 grupuri
+        from sklearn.cluster import KMeans
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_Normalized']])
 
-        # Determinăm care cluster este "riscant" (cel cu scoruri mai mari)
+        # Determinăm care cluster are scorurile mai mari – acesta va fi considerat "riscant"
         risky_cluster = df.groupby('Cluster_Label')['Risk_Score_Normalized'].mean().idxmax()
 
-        # Convertim în eticheta finală
+        # Etichetăm: 1 dacă aparține clusterului riscant, altfel 0
         df['Behavior_Risk_Level'] = np.where(df['Cluster_Label'] == risky_cluster, 1, 0)
 
         return df
@@ -330,6 +338,7 @@ def calculate_risk_score(df):
     except Exception as e:
         print(f"Eroare: {e}")
         return None
+
 
 def auto_adjust_column_width(writer, sheet_name):
     workbook = writer.book
