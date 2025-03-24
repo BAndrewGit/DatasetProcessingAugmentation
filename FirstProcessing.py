@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import re
 from scipy.stats import truncnorm
+from sklearn.cluster import KMeans
 import openpyxl
 import os
 from tkinter import Tk, filedialog
@@ -293,14 +294,14 @@ def postprocess_data(df):
         traceback.print_exc()
         return None
 
+
 def calculate_risk_score(df):
-    """Calculează scorul de risc și etichetele (recalculează mereu valorile)"""
+    """Calculează scorul de risc și etichetele folosind clustering pentru praguri dinamice."""
     try:
-        # Categorii de venit ajustate
+        # Calculare scor de risc similar
         is_low_income = df['Income_Category'] < 5000
         is_high_income = df['Income_Category'] > 7500
 
-        # Calcul condiții cu verificare dimensiuni
         conditions = [
             (is_low_income & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             (is_high_income & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
@@ -309,29 +310,25 @@ def calculate_risk_score(df):
             (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
         ]
 
-        # Calculează Risk_Score (mereu proaspăt)
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # Verificare scoruri unice
-        if df['Risk_Score'].nunique() == 1:
-            print("\nToate scorurile de risc sunt identice! Ajustați ponderile.")
-            return None
+        # Normalizare
+        df['Risk_Score_Normalized'] = (df['Risk_Score'] - df['Risk_Score'].mean()) / df['Risk_Score'].std()
 
-        # Prag dinamic bazat pe percentila 75%
-        threshold = df['Risk_Score'].quantile(0.75)
-        print(f"\nPrag automat determinat: {threshold:.2f}")
+        # Aplicăm clustering K-Means pentru a separa scorurile în 2 grupuri
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_Normalized']])
 
-        # Actualizează Behavior_Risk_Level (suprascrie dacă există deja)
-        df['Behavior_Risk_Level'] = np.where(
-            df['Risk_Score'] > threshold,
-            1,  # Risky
-            0  # Beneficially
-        )
+        # Determinăm care cluster este "riscant" (cel cu scoruri mai mari)
+        risky_cluster = df.groupby('Cluster_Label')['Risk_Score_Normalized'].mean().idxmax()
+
+        # Convertim în eticheta finală
+        df['Behavior_Risk_Level'] = np.where(df['Cluster_Label'] == risky_cluster, 1, 0)
 
         return df
 
     except Exception as e:
-        print(f"Eroare la calcul risc: {str(e)}")
+        print(f"Eroare: {e}")
         return None
 
 def auto_adjust_column_width(writer, sheet_name):
