@@ -7,6 +7,8 @@ from sklearn.compose import ColumnTransformer
 from sdv.single_table import CTGANSynthesizer
 from sdv.metadata import SingleTableMetadata
 
+INCOME_MIN = None
+INCOME_MAX = None
 
 def preprocess_data(df):
     categorical_cols = [
@@ -109,10 +111,15 @@ def enforce_constraints(row):
         row['Essential_Needs_Percentage'] = '100'
 
     try:
-        income = float(row.get('Income_Category', 4100))
-    except:
-        income = 4100
+        income_val = row.get('Income_Category', None)
+        if income_val is not None and income_val != '':
+            income = float(income_val)
+        else:
+            income = np.random.uniform(INCOME_MIN, INCOME_MAX)
+    except Exception:
+        income = np.random.uniform(INCOME_MIN, INCOME_MAX)
     row['Income_Category'] = str(int(round(income)))
+
 
     for col in ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech', 'Product_Lifetime_Appliances',
                 'Product_Lifetime_Cars']:
@@ -158,11 +165,16 @@ def apply_constraints(df):
 
 
 def main():
+    global INCOME_MIN, INCOME_MAX
     df = pd.read_csv('DatasetOriginal.csv')
     df, categorical_cols, numeric_cols = preprocess_data(df)
+    # Setăm valorile minime și maxime pentru Income_Category din datasetul original
+    INCOME_MIN = df['Income_Category'].min()
+    INCOME_MAX = df['Income_Category'].max()
+
     X = df[categorical_cols + numeric_cols]
     y = df['Behavior_Risk_Level']
-    # Pentru augmentare doar cu WCGAN, folosim întregul dataset original
+    # Pentru augmentare doar cu WCGAN, folosim întregul dataset original (cu label inclus)
     data_combined = pd.concat([X, y], axis=1)
     data_combined = apply_constraints(data_combined)
 
@@ -174,7 +186,7 @@ def main():
     ctgan = CTGANSynthesizer(metadata=metadata, epochs=200, batch_size=500, verbose=True, cuda=True)
     ctgan.fit(data_combined)
 
-    # Generăm un număr de esantioane sintetice; aici generăm jumătate din numărul de rânduri al datasetului original
+    # Generăm un număr de eșantioane sintetice; aici generăm jumătate din numărul de rânduri al datasetului original
     synthetic_samples = ctgan.sample(num_rows=len(data_combined) // 2).dropna()
     synthetic_samples = apply_constraints(synthetic_samples)
 
@@ -184,7 +196,8 @@ def main():
                 'Expense_Distribution_Transport', 'Expense_Distribution_Entertainment',
                 'Expense_Distribution_Health', 'Expense_Distribution_Personal_Care',
                 'Expense_Distribution_Child_Education', 'Expense_Distribution_Other']:
-        synthetic_samples[col] = synthetic_samples[col].astype(float).round(0).astype(int)
+        synthetic_samples[col] = pd.to_numeric(synthetic_samples[col], errors='coerce').fillna(0)
+        synthetic_samples[col] = synthetic_samples[col].round(0).astype(int)
 
     synthetic_samples.to_csv('WCGAN_augmented.csv', index=False)
 
