@@ -1,3 +1,5 @@
+import traceback
+
 import pandas as pd
 import numpy as np
 import re
@@ -7,7 +9,7 @@ import openpyxl
 import os
 from tkinter import Tk, filedialog
 
-GLOBAL_RISK_THRESHOLD = None
+
 
 CONFIG = {
     'risk_weights': [0.50, 0.20, 0.15, 0.15]
@@ -293,7 +295,6 @@ def postprocess_data(df):
 
     except Exception as e:
         print(f"Eroare gravă la preprocesare: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -319,7 +320,6 @@ def calculate_risk_score(df, threshold=None):
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
         if threshold is None:
-            from sklearn.cluster import KMeans
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score']])
             risky_cluster = df.groupby('Cluster_Label')['Risk_Score'].mean().idxmax()
@@ -574,8 +574,6 @@ def check_nan_values(df):
 
 
 def main():
-    global GLOBAL_RISK_THRESHOLD
-
     # Ascundem fereastra principală Tkinter
     Tk().withdraw()
 
@@ -590,6 +588,7 @@ def main():
         return
 
     try:
+        # Testare valori pentru random_essential_needs (opțional)
         test_values = ["<50%", "50-75%", ">75%", "45", "80%", "50-abc", "NaN", "invalid"]
         for val in test_values:
             result = random_essential_needs(val)
@@ -602,9 +601,13 @@ def main():
         df = normalize_and_translate_data(df)
 
         print("\n>>> Applying range smoothing...")
-        df = range_smoothing(df, age_column="Age", income_column="Income_Category",
-                             lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech",
-                                               "Product_Lifetime_Appliances", "Product_Lifetime_Cars"])
+        df = range_smoothing(
+            df,
+            age_column="Age",
+            income_column="Income_Category",
+            lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech",
+                              "Product_Lifetime_Appliances", "Product_Lifetime_Cars"]
+        )
 
         df_original = df.copy()
 
@@ -614,12 +617,16 @@ def main():
             return
 
         print("\n>>> Calculating risk score...")
-        df, GLOBAL_RISK_THRESHOLD = calculate_risk_score(df)
-
+        # Recalculăm pragul (threshold=None) indiferent de orice valoare salvată anterior
+        df, risk_threshold = calculate_risk_score(df, threshold=None)
         if df is None:
             return
 
-        print(f"\n🔹 Pragul global stabilit și salvat: {GLOBAL_RISK_THRESHOLD:.2f}")
+        print(f"\n🔹 Pragul global stabilit: {risk_threshold:.2f}")
+
+        # Salvăm noul prag direct în fișierul TXT (suprascriem orice valoare existentă)
+        with open("global_risk_threshold.txt", "w") as f:
+            f.write(f"{risk_threshold:.2f}")
 
         print("\nRisk distribution:")
         print(df['Behavior_Risk_Level'].value_counts(dropna=False))
