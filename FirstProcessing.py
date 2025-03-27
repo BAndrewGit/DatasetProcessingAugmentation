@@ -1,15 +1,12 @@
 import traceback
-
 import pandas as pd
 import numpy as np
 import re
 from scipy.stats import truncnorm
 from sklearn.cluster import KMeans
-import openpyxl
 import os
 from tkinter import Tk, filedialog
-
-
+from sklearn.preprocessing import MinMaxScaler, RobustScaler
 
 CONFIG = {
     'risk_weights': [0.50, 0.20, 0.15, 0.15]
@@ -235,7 +232,6 @@ def normalize_and_translate_data(df):
     return df
 
 def postprocess_data(df):
-    """Preprocesare avansată a tuturor coloanelor"""
     try:
         # 4. Procesare coloane categorice ordinale
         ordinal_mappings = {
@@ -259,11 +255,10 @@ def postprocess_data(df):
             'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
             'Financial_Investments', 'Savings_Obstacle'
         ]
-
         # Filtrăm doar coloanele existente
         nominal_cols = [col for col in nominal_cols if col in df.columns]
 
-        # One-hot encoding pentru categorii cu sub 10 valori unice
+        # Aplicăm one-hot encoding doar pe categorii cu < 10 valori unice
         for col in nominal_cols:
             if df[col].nunique() < 10:
                 dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
@@ -299,8 +294,57 @@ def postprocess_data(df):
         return None
 
 
-def calculate_risk_score(df, threshold=None):
+def calculate_risk(df, threshold=None):
     try:
+        numeric_cols = [
+            'Income_Category', 'Essential_Needs_Percentage',
+            'Expense_Distribution_Entertainment', 'Debt_Level',
+            'Savings_Goal_Emergency_Fund'
+        ]
+        # Convertim coloanele la numeric (dacă nu sunt deja)
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Calculăm scorul de risc ca sumă ponderată a condițiilor
+        conditions = [
+            ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
+            ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
+            (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
+            (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
+            (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
+        ]
+        df['Risk_Score'] = np.sum(conditions, axis=0)
+
+        # Scalăm Risk_Score pentru clustering, astfel încât să nu fie afectat de diferențe de scară
+        scaler = MinMaxScaler()
+        df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
+
+        if threshold is None:
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
+            # Identificăm clusterul cu scor mediu maxim (cel riscant)
+            risky_cluster = df.groupby('Cluster_Label')['Risk_Score_scaled'].mean().idxmax()
+
+            # Se stabilește pragul pe baza minimului în clusterul riscant (pe scara scalată)
+            threshold_scaled = df[df['Cluster_Label'] == risky_cluster]['Risk_Score_scaled'].min()
+            print(f"Pragul dinamic stabilit (KMeans) [scaled]: {threshold_scaled:.2f}")
+            # Se inversează scalarea pentru a obține pragul în scara originală
+            threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
+
+        # Eticheta comportamentul pe baza scorului (comparat cu pragul în scara originală)
+        df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
+
+        # Eliminăm coloanele auxiliare
+        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label'], inplace=True)
+        return df, threshold
+    except Exception as e:
+        print(f"Eroare la calculul scorului de risc: {e}")
+        return None, None
+
+
+def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_iter=3):
+    try:
+        # 1. Convertim coloanele relevante la numeric (asigură-te că acestea există în df)
         numeric_cols = [
             'Income_Category', 'Essential_Needs_Percentage',
             'Expense_Distribution_Entertainment', 'Debt_Level',
@@ -309,6 +353,7 @@ def calculate_risk_score(df, threshold=None):
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
+        # 2. Calculăm scorul de risc ca sumă ponderată a condițiilor
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
@@ -316,24 +361,60 @@ def calculate_risk_score(df, threshold=None):
             (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
             (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
         ]
-
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
+        # 3. Scalăm Risk_Score pentru a elimina efectele diferențelor de scară
+        scaler = MinMaxScaler()
+        df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
+
+        # Dacă nu s-a specificat un prag, determinăm unul folosind clustering-ul
         if threshold is None:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score']])
-            risky_cluster = df.groupby('Cluster_Label')['Risk_Score'].mean().idxmax()
+            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
+            risky_cluster = df.groupby('Cluster_Label')['Risk_Score_scaled'].mean().idxmax()
+            threshold_scaled = df[df['Cluster_Label'] == risky_cluster]['Risk_Score_scaled'].min()
+            threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
+            print(f"Initial dynamic threshold (scaled): {threshold_scaled:.2f} -> threshold: {threshold:.2f}")
 
-            # Pragul stabilit dinamic prin KMeans
-            threshold = df[df['Cluster_Label'] == risky_cluster]['Risk_Score'].min()
-            print(f"Pragul dinamic stabilit (KMeans): {threshold:.2f}")
+        # 4. Inițializăm etichetele ca incert (-1)
+        df['Behavior_Risk_Level'] = -1
 
-        df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
+        # 5. Etichetare progresivă – iterăm până când majoritatea instanțelor sunt etichetate cu încredere
+        for i in range(max_iter):
+            # Recalculăm clustering-ul pentru a obține centroids actualizate
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
+            centroids = kmeans.cluster_centers_
 
+            # Calculăm distanța fiecărei instanțe față de centrul clusterului său
+            df['Distance_to_Centroid'] = df.apply(
+                lambda row: abs(row['Risk_Score_scaled'] - centroids[int(row['Cluster_Label'])][0]), axis=1)
+
+            # Pentru instanțele cu distanță mică (de încredere), atribuim eticheta
+            high_confidence = df['Distance_to_Centroid'] <= distance_threshold
+            df.loc[high_confidence, 'Behavior_Risk_Level'] = np.where(
+                df.loc[high_confidence, 'Risk_Score'] >= threshold, 1, 0
+            )
+
+            num_uncertain = np.sum(df['Behavior_Risk_Level'] == -1)
+            print(f"Iterația {i + 1}: {num_uncertain} instanțe rămân incerte.")
+            # Dacă numărul instanțelor incerte este foarte mic, ieșim din ciclu
+            if num_uncertain < 0.05 * len(df):  # dacă mai puțin de 5% sunt incerte
+                break
+
+        # Eliminăm coloanele auxiliare
+        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label', 'Distance_to_Centroid'], inplace=True)
         return df, threshold
+
     except Exception as e:
-        print(f"Eroare la calculul scorului de risc: {e}")
+        print(f"Eroare la calculul riscului progresiv: {e}")
         return None, None
+
+
+def scale_numeric_columns(df, columns):
+    scaler = RobustScaler()
+    df[columns] = scaler.fit_transform(df[columns])
+    return df
 
 
 def auto_adjust_column_width(writer, sheet_name):
@@ -376,6 +457,10 @@ def random_age(value):
     except:
         return value
 
+def replace_age_column(df, column_name="Age"):
+    df[column_name] = df[column_name].apply(random_age)
+    return df
+
 def random_income(value):
     value = str(value).replace(".", "").strip()
     match = re.match(r"(\d+)[^\d]+(\d+)", value)
@@ -399,6 +484,10 @@ def random_income(value):
         return int(value) // 100 * 100  # Rotunjim la cel mai apropiat multiplu de 100
     except:
         return value
+
+def replace_income_category(df, column_name="Income_Category"):
+    df[column_name] = df[column_name].apply(random_income)
+    return df
 
 def random_product_lifetime(value):
     value = str(value).strip()
@@ -438,6 +527,11 @@ def random_product_lifetime(value):
             rand_val = np.random.randint(lower, upper + 1)
             return f"{rand_val} years"
         return value
+
+def replace_product_lifetime_columns(df, columns):
+    for col in columns:
+        df[col] = df[col].apply(random_product_lifetime)
+    return df
 
 def random_essential_needs(value):
     if pd.isna(value) or str(value).strip().lower() == "nan":
@@ -494,19 +588,6 @@ def random_essential_needs(value):
 
     return rounded_value
 
-def replace_age_column(df, column_name="Age"):
-    df[column_name] = df[column_name].apply(random_age)
-    return df
-
-def replace_income_category(df, column_name="Income_Category"):
-    df[column_name] = df[column_name].apply(random_income)
-    return df
-
-def replace_product_lifetime_columns(df, columns):
-    for col in columns:
-        df[col] = df[col].apply(random_product_lifetime)
-    return df
-
 def replace_essential_needs(df, column_name="Essential_Needs_Percentage"):
     df[column_name] = df[column_name].apply(random_essential_needs)
     return df
@@ -554,7 +635,6 @@ def save_files(df):
         print("No save location selected.")
 
 def check_nan_values(df):
-    """Verifică și afișează valorile NaN din DataFrame."""
     nan_info = df.isna().sum()
     nan_columns = nan_info[nan_info > 0]  # Filtrează doar coloanele cu NaN
 
@@ -588,7 +668,7 @@ def main():
         return
 
     try:
-        # Testare valori pentru random_essential_needs (opțional)
+        # Testare pentru random_essential_needs (opțional)
         test_values = ["<50%", "50-75%", ">75%", "45", "80%", "50-abc", "NaN", "invalid"]
         for val in test_values:
             result = random_essential_needs(val)
@@ -609,28 +689,33 @@ def main():
                               "Product_Lifetime_Appliances", "Product_Lifetime_Cars"]
         )
 
-        df_original = df.copy()
+        # Păstrăm o copie a datelor înainte de postprocesare pentru fișierul Excel decodat
+        df_decoded = df.copy()
 
         print("\n>>> Post-processing data...")
         df = postprocess_data(df)
         if df is None:
             return
 
+        # Aplicăm scalarea pe coloanele numerice (pentru versiunea encoded, CSV)
+        numeric_cols_to_scale = [
+            'Age', 'Income_Category', 'Essential_Needs_Percentage',
+            'Expense_Distribution_Entertainment', 'Debt_Level', 'Savings_Goal_Emergency_Fund'
+        ]
+        df = scale_numeric_columns(df, numeric_cols_to_scale)
+
         print("\n>>> Calculating risk score...")
-        # Recalculăm pragul (threshold=None) indiferent de orice valoare salvată anterior
-        df, risk_threshold = calculate_risk_score(df, threshold=None)
+        df, risk_threshold = calculate_risk_progressive(df, threshold=None)
         if df is None:
             return
 
-        print(f"\n🔹 Pragul global stabilit: {risk_threshold:.2f}")
-
-        # Salvăm noul prag direct în fișierul TXT (suprascriem orice valoare existentă)
+        print(f"\n🔹 Global threshold: {risk_threshold:.2f}")
+        # Salvăm pragul global într-un fișier TXT
         with open("global_risk_threshold.txt", "w") as f:
             f.write(f"{risk_threshold:.2f}")
 
         print("\nRisk distribution:")
         print(df['Behavior_Risk_Level'].value_counts(dropna=False))
-
         if len(df['Behavior_Risk_Level'].unique()) == 1:
             print("\nNu există suficiente variante de risc pentru analiză!")
             print("Posibile soluții:")
@@ -638,16 +723,36 @@ def main():
             print("- Revedeți datele de intrare")
             return
 
-        df_original['Behavior_Risk_Level'] = df['Behavior_Risk_Level']
+        # Decodificăm coloana de risc pentru versiunea Excel: 0 -> "beneficial", 1 -> "risky"
+        def decode_risk_level(x):
+            return "Risky" if x == 1 else "Beneficial"
 
-        print("\n>>> DEBUG: Columns AFTER processing:")
-        print(df.columns)
+        df_decoded['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].apply(decode_risk_level)
 
-        print("\n>>> Verificare valori NaN...")
-        check_nan_values(df_original)
+        # Solicităm locația de salvare pentru fișierul Excel decodat
+        Tk().withdraw()  # ascundem din nou fereastra Tkinter
+        excel_save_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Select save location for decoded Excel file"
+        )
+        if not excel_save_path:
+            print("No save location selected for Excel.")
+            return
 
-        print("\n>>> Saving processed data...")
-        save_files(df_original)
+        # Salvăm fișierul Excel decodat
+        with pd.ExcelWriter(excel_save_path, engine='openpyxl') as writer:
+            df_decoded.to_excel(writer, index=False, sheet_name='Decoded_Data')
+            auto_adjust_column_width(writer, 'Decoded_Data')
+        print(f"Decoded Excel file saved at: {excel_save_path}")
+
+        # Derivăm calea fișierului CSV din calea fișierului Excel, adăugând sufixul "_encoded"
+        base_name, _ = os.path.splitext(excel_save_path)
+        csv_save_path = base_name + "_encoded.csv"
+
+        # Salvăm CSV-ul cu versiunea encoded (valorile rămân codificate și scalate)
+        df.to_csv(csv_save_path, index=False, encoding='utf-8')
+        print(f"Encoded CSV file saved at: {csv_save_path}")
 
         print("\nProcessing complete!")
 
