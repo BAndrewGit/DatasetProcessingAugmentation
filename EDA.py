@@ -21,7 +21,6 @@ from sklearn.metrics import (
 )
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline, make_pipeline
 import json
 import os
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
@@ -142,6 +141,17 @@ def preprocess_data(df):
         import traceback
         traceback.print_exc()
         return None
+
+def preprocess_encoded_data(df):
+    for col in CONFIG['required_columns']:
+        if col in df.columns:
+            if df[col].isna().any():
+                if df[col].dtype in ['int64', 'float64']:
+                    df[col] = df[col].fillna(df[col].median())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0])
+    return df
+
 
 
 def train_models(df):
@@ -420,7 +430,7 @@ def main():
     if df is None:
         return
 
-    df = preprocess_data(df)
+    df = preprocess_encoded_data(df)
     if df is None:
         return
 
