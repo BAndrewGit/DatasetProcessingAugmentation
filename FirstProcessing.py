@@ -4,23 +4,28 @@ import numpy as np
 import re
 from scipy.stats import truncnorm
 from sklearn.cluster import KMeans
-import os
 from tkinter import Tk, filedialog
 from sklearn.preprocessing import MinMaxScaler, RobustScaler
+import os
 
+# Set maximum CPU count for parallel processing
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
+
+# Configuration for risk weights
 CONFIG = {
     'risk_weights': [0.50, 0.20, 0.15, 0.15]
 }
 
+
+# Normalize and translate column names and values
 def normalize_and_translate_data(df):
     df.columns = df.columns.str.strip()
 
-    # 1) Eliminăm coloana de timestamp, dacă există
+    # Remove timestamp column if exists
     if df.columns[0].lower() in ['marcaj de timp', 'timestamp']:
         df.drop(columns=df.columns[0], inplace=True)
 
-
-    # 2) Redenumire coloane (single pass)
+    # Rename columns using a single mapping pass
     column_mapping = {
         "Câți ani aveți?": "Age",
         "Care este statutul dumneavoastră familial?": "Family_Status",
@@ -47,8 +52,7 @@ def normalize_and_translate_data(df):
     }
     df.rename(columns=column_mapping, inplace=True)
 
-    # 3) Dicționar de traduceri single-value (non-multi-choice)
-    #    - Valorile repetitive (Masculin->Male, etc.)
+    # Replace repetitive values with English translations
     basic_translation = {
         "Masculin": "Male",
         "Feminin": "Female",
@@ -106,11 +110,10 @@ def normalize_and_translate_data(df):
         "Sub 4000 RON": "<4.000 RON",
     }
 
-
-    # Aplicăm traducerile single-value
+    # Apply basic translations
     df.replace(basic_translation, inplace=True)
 
-    # Traducem `Impulse_Buying_Category`
+    # Translate impulse buying category values
     impulse_map = {
         "Alimentație": "Food",
         "Haine sau produse de îngrijire personală": "Clothing or personal care products",
@@ -125,7 +128,7 @@ def normalize_and_translate_data(df):
     if "Impulse_Buying_Reason" in df.columns:
         df["Impulse_Buying_Reason"] = df["Impulse_Buying_Reason"].replace(impulse_r_map)
 
-    # 4) Dicționare pentru coloanele multi-value (fiecare coloană are map-ul său)
+    # Mapping for multi-value columns translation
     savings_map = {
         "Economii pentru achiziții majore (locuință, mașină)": "Savings_Goal_Major_Purchases",
         "Siguranță financiară pentru pensionare": "Savings_Goal_Retirement",
@@ -150,7 +153,7 @@ def normalize_and_translate_data(df):
         "Altceva": "Savings_Obstacle_Other",
         "Venitul este insuficient": "Savings_Obstacle_Insufficient_Income",
         "Alte cheltuieli urgente au prioritate": "Savings_Obstacle_Other_Expenses",
-        "Nu consider economiile o prioritate": "SSavings_Obstacle_Not_Priority"
+        "Nu consider economiile o prioritate": "Savings_Obstacle_Not_Priority"
     }
 
     credit_map = {
@@ -161,7 +164,7 @@ def normalize_and_translate_data(df):
         "Nu am folosit niciodată": "Credit_Never_Used"
     }
 
-    # 5) Dicționar cu ce coloane (multi-value) procesezi la one-hot
+    # Columns for one-hot encoding of multi-value fields
     one_hot_columns = {
         "Savings_Goal": [
             "Savings_Goal_Emergency_Fund",
@@ -196,7 +199,7 @@ def normalize_and_translate_data(df):
         ]
     }
 
-    # 6) One-hot maps (folosite la translate) - cheie = numele coloanei, valoare = map dedicat
+    # Mapping for one-hot translation per column
     one_hot_maps = {
         "Savings_Goal": savings_map,
         "Savings_Obstacle": savings_obstacle_map,
@@ -204,7 +207,7 @@ def normalize_and_translate_data(df):
         "Credit_Usage": credit_map
     }
 
-    # Funcție de mapping + split pe care o aplicăm în bucla de mai jos
+    # Helper function to translate multi-value entries
     def sub_translate(col_name, text):
         if pd.isnull(text):
             return text
@@ -213,27 +216,26 @@ def normalize_and_translate_data(df):
         mapped = [current_map.get(c.strip(), c.strip()) for c in comps]
         return ';'.join(mapped)
 
-    # 7) Procesăm fiecare coloană multi-value definită
+    # Process each multi-value column: clean, translate and one-hot encode
     for col, new_cols in one_hot_columns.items():
         if col in df.columns:
-            # Curățăm spațiile la ';'
+            # Clean spaces around delimiters
             df[col] = df[col].str.replace(r'\s*;\s*', ';', regex=True).str.strip()
-
-            # Traducem fiecare element
+            # Translate each element
             df[col] = df[col].apply(lambda x: sub_translate(col, x))
-
-            # get_dummies
+            # One-hot encode the values
             dummies = df[col].str.get_dummies(';')
             dummies = dummies.reindex(columns=new_cols, fill_value=0)
-
             df = pd.concat([df, dummies], axis=1)
             df.drop(columns=[col], inplace=True)
 
     return df
 
+
+# Post-process data: encode ordinal/nominal values, convert types and impute missing data
 def postprocess_data(df):
     try:
-        # 4. Procesare coloane categorice ordinale
+        # Map ordinal categorical columns to numeric values
         ordinal_mappings = {
             'Impulse_Buying_Frequency': {
                 'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
@@ -249,36 +251,33 @@ def postprocess_data(df):
         for col, mapping in ordinal_mappings.items():
             df[col] = df[col].map(mapping).fillna(0).astype(int)
 
-        # 6. Procesare coloane categorice nominale
+        # One-hot encode nominal categorical columns with less than 10 unique values
         nominal_cols = [
             'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
             'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
             'Financial_Investments', 'Savings_Obstacle'
         ]
-        # Filtrăm doar coloanele existente
         nominal_cols = [col for col in nominal_cols if col in df.columns]
 
-        # Aplicăm one-hot encoding doar pe categorii cu < 10 valori unice
         for col in nominal_cols:
             if df[col].nunique() < 10:
                 dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
                 df = pd.concat([df, dummies], axis=1)
                 df.drop(columns=[col], inplace=True)
 
-        # 7. Procesare coloane Credit_*
+        # Convert Credit_* columns to binary (1 or 0)
         credit_cols = [c for c in df.columns if c.startswith('Credit_')]
         for col in credit_cols:
             df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
 
-        # 8. Conversia coloanelor rămase la numeric
+        # Convert remaining object columns to numeric; drop if conversion fails
         for col in df.select_dtypes(include=['object']).columns:
             try:
                 df[col] = pd.to_numeric(df[col], errors='raise')
             except:
-                # Dacă nu poate fi convertită, eliminăm coloana
                 df.drop(columns=[col], inplace=True)
 
-        # 9. Imputare valori lipsă
+        # Impute missing values: median for numeric, mode for non-numeric
         for col in df.columns:
             if df[col].isna().sum() > 0:
                 if df[col].dtype in ['int64', 'float64']:
@@ -289,11 +288,12 @@ def postprocess_data(df):
         return df
 
     except Exception as e:
-        print(f"Eroare gravă la preprocesare: {str(e)}")
+        print(f"Critical preprocessing error: {str(e)}")
         traceback.print_exc()
         return None
 
 
+# Calculate risk score using weighted conditions and clustering
 def calculate_risk(df, threshold=None):
     try:
         numeric_cols = [
@@ -301,11 +301,11 @@ def calculate_risk(df, threshold=None):
             'Expense_Distribution_Entertainment', 'Debt_Level',
             'Savings_Goal_Emergency_Fund'
         ]
-        # Convertim coloanele la numeric (dacă nu sunt deja)
+        # Convert specified columns to numeric
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Calculăm scorul de risc ca sumă ponderată a condițiilor
+        # Compute risk score as weighted sum of conditions
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
@@ -315,36 +315,34 @@ def calculate_risk(df, threshold=None):
         ]
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # Scalăm Risk_Score pentru clustering, astfel încât să nu fie afectat de diferențe de scară
+        # Scale risk score to normalize differences in scale
         scaler = MinMaxScaler()
         df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
 
+        # Determine dynamic threshold using KMeans clustering if not provided
         if threshold is None:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
-            # Identificăm clusterul cu scor mediu maxim (cel riscant)
             risky_cluster = df.groupby('Cluster_Label')['Risk_Score_scaled'].mean().idxmax()
-
-            # Se stabilește pragul pe baza minimului în clusterul riscant (pe scara scalată)
             threshold_scaled = df[df['Cluster_Label'] == risky_cluster]['Risk_Score_scaled'].min()
-            print(f"Pragul dinamic stabilit (KMeans) [scaled]: {threshold_scaled:.2f}")
-            # Se inversează scalarea pentru a obține pragul în scara originală
+            print(f"Dynamic threshold (KMeans) [scaled]: {threshold_scaled:.2f}")
             threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
 
-        # Eticheta comportamentul pe baza scorului (comparat cu pragul în scara originală)
+        # Label behavior based on risk score and threshold
         df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
 
-        # Eliminăm coloanele auxiliare
+        # Remove auxiliary columns
         df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label'], inplace=True)
         return df, threshold
     except Exception as e:
-        print(f"Eroare la calculul scorului de risc: {e}")
+        print(f"Error calculating risk score: {e}")
         return None, None
 
 
+# Progressive risk calculation with iterative clustering and confidence labeling
 def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_iter=3):
     try:
-        # 1. Convertim coloanele relevante la numeric (asigură-te că acestea există în df)
+        # Convert relevant columns to numeric
         numeric_cols = [
             'Income_Category', 'Essential_Needs_Percentage',
             'Expense_Distribution_Entertainment', 'Debt_Level',
@@ -353,7 +351,7 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # 2. Calculăm scorul de risc ca sumă ponderată a condițiilor
+        # Compute risk score as weighted sum of conditions
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
@@ -363,11 +361,11 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
         ]
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # 3. Scalăm Risk_Score pentru a elimina efectele diferențelor de scară
+        # Scale risk score for clustering
         scaler = MinMaxScaler()
         df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
 
-        # Dacă nu s-a specificat un prag, determinăm unul folosind clustering-ul
+        # Determine initial threshold with clustering if not provided
         if threshold is None:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
@@ -376,53 +374,53 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
             threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
             print(f"Initial dynamic threshold (scaled): {threshold_scaled:.2f} -> threshold: {threshold:.2f}")
 
-        # 4. Inițializăm etichetele ca incert (-1)
+        # Initialize risk labels as uncertain (-1)
         df['Behavior_Risk_Level'] = -1
 
-        # 5. Etichetare progresivă – iterăm până când majoritatea instanțelor sunt etichetate cu încredere
+        # Iterative labeling based on confidence (distance to cluster centroid)
         for i in range(max_iter):
-            # Recalculăm clustering-ul pentru a obține centroids actualizate
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
             centroids = kmeans.cluster_centers_
 
-            # Calculăm distanța fiecărei instanțe față de centrul clusterului său
+            # Calculate distance from each point to its cluster centroid
             df['Distance_to_Centroid'] = df.apply(
                 lambda row: abs(row['Risk_Score_scaled'] - centroids[int(row['Cluster_Label'])][0]), axis=1)
 
-            # Pentru instanțele cu distanță mică (de încredere), atribuim eticheta
+            # Label points with high confidence (distance within threshold)
             high_confidence = df['Distance_to_Centroid'] <= distance_threshold
             df.loc[high_confidence, 'Behavior_Risk_Level'] = np.where(
                 df.loc[high_confidence, 'Risk_Score'] >= threshold, 1, 0
             )
 
             num_uncertain = np.sum(df['Behavior_Risk_Level'] == -1)
-            print(f"Iterația {i + 1}: {num_uncertain} instanțe rămân incerte.")
-            # Dacă numărul instanțelor incerte este foarte mic, ieșim din ciclu
-            if num_uncertain < 0.05 * len(df):  # dacă mai puțin de 5% sunt incerte
+            print(f"Iteration {i + 1}: {num_uncertain} instances remain uncertain.")
+            if num_uncertain < 0.05 * len(df):
                 break
 
-        # Eliminăm coloanele auxiliare
+        # Remove auxiliary columns
         df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label', 'Distance_to_Centroid'], inplace=True)
         return df, threshold
 
     except Exception as e:
-        print(f"Eroare la calculul riscului progresiv: {e}")
+        print(f"Error in progressive risk calculation: {e}")
         return None, None
 
 
+# Scale specified numeric columns using RobustScaler
 def scale_numeric_columns(df, columns):
     scaler = RobustScaler()
     df[columns] = scaler.fit_transform(df[columns])
     return df
 
 
+# Adjust Excel column widths based on content
 def auto_adjust_column_width(writer, sheet_name):
     workbook = writer.book
     worksheet = writer.sheets[sheet_name]
     for column_cells in worksheet.columns:
         max_length = 0
-        column = column_cells[0].column_letter  # Get column name
+        column = column_cells[0].column_letter  # Get column letter
         for cell in column_cells:
             try:
                 if cell.value:
@@ -432,10 +430,14 @@ def auto_adjust_column_width(writer, sheet_name):
         adjusted_width = max_length + 2
         worksheet.column_dimensions[column].width = adjusted_width
 
+
+# Generate a random value from a truncated normal distribution
 def truncated_normal(mean, std_dev, lower, upper):
     a, b = (lower - mean) / std_dev, (upper - mean) / std_dev
     return truncnorm.rvs(a, b, loc=mean, scale=std_dev, size=1)[0]
 
+
+# Generate random age based on string ranges (e.g., "30-40", ">50", "<20")
 def random_age(value):
     value = str(value).strip()
     match = re.match(r"(\d+)\s*-\s*(\d+)", value)
@@ -457,10 +459,13 @@ def random_age(value):
     except:
         return value
 
+# Replace age column values using random_age
 def replace_age_column(df, column_name="Age"):
     df[column_name] = df[column_name].apply(random_age)
     return df
 
+
+# Generate random income based on string patterns and ranges
 def random_income(value):
     value = str(value).replace(".", "").strip()
     match = re.match(r"(\d+)[^\d]+(\d+)", value)
@@ -481,14 +486,17 @@ def random_income(value):
         random_value = np.random.randint(lower // 100, (upper // 100) + 1) * 100
         return random_value
     try:
-        return int(value) // 100 * 100  # Rotunjim la cel mai apropiat multiplu de 100
+        return int(value) // 100 * 100  # Round to nearest hundred
     except:
         return value
 
+# Replace income category column values using random_income
 def replace_income_category(df, column_name="Income_Category"):
     df[column_name] = df[column_name].apply(random_income)
     return df
 
+
+# Generate random product lifetime based on input ranges
 def random_product_lifetime(value):
     value = str(value).strip()
     if "Not purchased yet" in value:
@@ -496,7 +504,7 @@ def random_product_lifetime(value):
     match = re.match(r"<\s*(\d+)\s*months", value, re.IGNORECASE)
     if match:
         upper = int(match.group(1))
-        lower = max(1, upper - 3)  # Generează între [upper-3, upper)
+        lower = max(1, upper - 3)
         rand_val = np.random.randint(lower, upper)
         return f"{rand_val} months"
     if "month" in value.lower():
@@ -528,11 +536,14 @@ def random_product_lifetime(value):
             return f"{rand_val} years"
         return value
 
+# Replace specified product lifetime columns using random_product_lifetime
 def replace_product_lifetime_columns(df, columns):
     for col in columns:
         df[col] = df[col].apply(random_product_lifetime)
     return df
 
+
+# Generate random essential needs percentage from input text
 def random_essential_needs(value):
     if pd.isna(value) or str(value).strip().lower() == "nan":
         return np.nan
@@ -542,18 +553,14 @@ def random_essential_needs(value):
 
     try:
         if '<' in str_value:
-            # Case: "<50%" → [30, 50)
             min_val, max_val = 30, 50
         elif '>' in str_value:
-            # Case: ">75%" → (75, 80]
             min_val, max_val = 75, 80
         elif '-' in str_value:
-            # Case: "50-75%"
             parts = str_value.split('-')
             min_val = float(parts[0])
             max_val = float(parts[1])
         else:
-            # Numeric handling (e.g., "45", "60%")
             num_value = float(str_value)
             if num_value < 50:
                 min_val, max_val = 30, 50
@@ -562,36 +569,31 @@ def random_essential_needs(value):
             else:
                 min_val, max_val = 75, 80
     except ValueError:
-        return np.nan  # Handle invalid splits or conversions
+        return np.nan
 
-    # Debug print to check the interval (now safe)
     print(f"[DEBUG] Processed value={value}, min={min_val}, max={max_val}")
 
-    # Handle invalid ranges (e.g., min > max)
     if min_val is None or max_val is None or np.isnan(min_val) or np.isnan(max_val):
-        return np.nan  # Invalid configuration
+        return np.nan
 
-    # Ensure valid range (swap if needed)
     if min_val > max_val:
         min_val, max_val = max_val, min_val
     elif min_val == max_val:
-        return min_val  # No randomness needed
+        return min_val
 
-    # Generate random number in [min_val, max_val]
     random_num = np.random.uniform(min_val, max_val)
-
-    # Round to nearest 5
     rounded_value = np.round(random_num / 5) * 5
-
-    # Clamp to [min_val, max_val] (inclusive)
     rounded_value = max(min_val, min(rounded_value, max_val))
 
     return rounded_value
 
+# Replace essential needs column using random_essential_needs
 def replace_essential_needs(df, column_name="Essential_Needs_Percentage"):
     df[column_name] = df[column_name].apply(random_essential_needs)
     return df
 
+
+# Apply range smoothing on age, income, product lifetime, and essential needs columns
 def range_smoothing(df, age_column="Age", income_column="Income_Category", lifetime_columns=None,
                     essential_needs_column="Essential_Needs_Percentage"):
 
@@ -609,9 +611,10 @@ def range_smoothing(df, age_column="Age", income_column="Income_Category", lifet
 
     return df
 
+
+# Save processed data to Excel and CSV files
 def save_files(df):
-    # Select location to save the processed file (Excel)
-    Tk().withdraw()
+    Tk().withdraw()  # Hide main Tkinter window
     save_path = filedialog.asksaveasfilename(
         defaultextension=".xlsx",
         filetypes=[("Excel files", "*.xlsx")],
@@ -619,45 +622,45 @@ def save_files(df):
     )
 
     if save_path:
-        # 1) Salvăm Excel
+        # Save as Excel
         with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Processed_Data')
             auto_adjust_column_width(writer, 'Processed_Data')
         print(f"Excel file saved at: {save_path}")
 
-        # 2) Salvăm CSV (cu aceeași bază de fișier, dar extensia .csv)
-        filename_no_ext, _ = os.path.splitext(save_path)  # eliminăm .xlsx
+        # Save as CSV with same base filename
+        filename_no_ext, _ = os.path.splitext(save_path)
         csv_save_path = filename_no_ext + ".csv"
         df.to_csv(csv_save_path, index=False, encoding='utf-8')
         print(f"CSV file saved at: {csv_save_path}")
-
     else:
         print("No save location selected.")
 
+
+# Check and print NaN values in the DataFrame
 def check_nan_values(df):
     nan_info = df.isna().sum()
-    nan_columns = nan_info[nan_info > 0]  # Filtrează doar coloanele cu NaN
+    nan_columns = nan_info[nan_info > 0]
 
     if len(nan_columns) == 0:
-        print("\n>>> INFO: Nu există valori NaN în date.")
+        print("\n>>> INFO: No NaN values in data.")
         return
 
-    print("\n>>> ATENȚIE: Au fost detectate valori NaN în următoarele coloane:")
+    print("\n>>> WARNING: Detected NaN values in the following columns:")
     for col, count in nan_columns.items():
-        print(f"- Coloana '{col}': {count} valori NaN")
+        print(f"- Column '{col}': {count} NaN values")
 
-    # Afișează primele 5 rânduri cu NaN pentru fiecare coloană
     for col in nan_columns.index:
         nan_rows = df[df[col].isna()]
-        print(f"\nPrimele 5 rânduri cu NaN în coloana '{col}':")
+        print(f"\nFirst 5 rows with NaN in column '{col}':")
         print(nan_rows.head(5))
 
 
+# Main function: file selection, data processing pipeline, and saving results
 def main():
-    # Ascundem fereastra principală Tkinter
-    Tk().withdraw()
+    Tk().withdraw()  # Hide Tkinter main window
 
-    # Selectăm fișierul de intrare
+    # Select input CSV file
     file_path = filedialog.askopenfilename(
         filetypes=[("CSV files", "*.csv")],
         title="Select a CSV file to process"
@@ -668,7 +671,7 @@ def main():
         return
 
     try:
-        # Testare pentru random_essential_needs (opțional)
+        # Optional test for random_essential_needs function
         test_values = ["<50%", "50-75%", ">75%", "45", "80%", "50-abc", "NaN", "invalid"]
         for val in test_values:
             result = random_essential_needs(val)
@@ -689,7 +692,7 @@ def main():
                               "Product_Lifetime_Appliances", "Product_Lifetime_Cars"]
         )
 
-        # Păstrăm o copie a datelor înainte de postprocesare pentru fișierul Excel decodat
+        # Keep a copy before post-processing for decoded Excel file
         df_decoded = df.copy()
 
         print("\n>>> Post-processing data...")
@@ -697,7 +700,7 @@ def main():
         if df is None:
             return
 
-        # Aplicăm scalarea pe coloanele numerice (pentru versiunea encoded, CSV)
+        # Scale numeric columns for encoded CSV version
         numeric_cols_to_scale = [
             'Age', 'Income_Category', 'Essential_Needs_Percentage',
             'Expense_Distribution_Entertainment', 'Debt_Level', 'Savings_Goal_Emergency_Fund'
@@ -710,27 +713,26 @@ def main():
             return
 
         print(f"\n🔹 Global threshold: {risk_threshold:.2f}")
-        # Salvăm pragul global într-un fișier TXT
         with open("global_risk_threshold.txt", "w") as f:
             f.write(f"{risk_threshold:.2f}")
 
         print("\nRisk distribution:")
         print(df['Behavior_Risk_Level'].value_counts(dropna=False))
         if len(df['Behavior_Risk_Level'].unique()) == 1:
-            print("\nNu există suficiente variante de risc pentru analiză!")
-            print("Posibile soluții:")
-            print("- Ajustați ponderile din CONFIG['risk_weights']")
-            print("- Revedeți datele de intrare")
+            print("\nNot enough risk variation for analysis!")
+            print("Possible solutions:")
+            print("- Adjust CONFIG['risk_weights']")
+            print("- Review input data")
             return
 
-        # Decodificăm coloana de risc pentru versiunea Excel: 0 -> "beneficial", 1 -> "risky"
+        # Decode risk levels for Excel file: 0 -> "Beneficial", 1 -> "Risky"
         def decode_risk_level(x):
             return "Risky" if x == 1 else "Beneficial"
 
         df_decoded['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].apply(decode_risk_level)
 
-        # Solicităm locația de salvare pentru fișierul Excel decodat
-        Tk().withdraw()  # ascundem din nou fereastra Tkinter
+        # Select save location for decoded Excel file
+        Tk().withdraw()
         excel_save_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel files", "*.xlsx")],
@@ -740,17 +742,15 @@ def main():
             print("No save location selected for Excel.")
             return
 
-        # Salvăm fișierul Excel decodat
+        # Save decoded Excel file
         with pd.ExcelWriter(excel_save_path, engine='openpyxl') as writer:
             df_decoded.to_excel(writer, index=False, sheet_name='Decoded_Data')
             auto_adjust_column_width(writer, 'Decoded_Data')
         print(f"Decoded Excel file saved at: {excel_save_path}")
 
-        # Derivăm calea fișierului CSV din calea fișierului Excel, adăugând sufixul "_encoded"
+        # Save encoded CSV file with a modified filename
         base_name, _ = os.path.splitext(excel_save_path)
         csv_save_path = base_name + "_encoded.csv"
-
-        # Salvăm CSV-ul cu versiunea encoded (valorile rămân codificate și scalate)
         df.to_csv(csv_save_path, index=False, encoding='utf-8')
         print(f"Encoded CSV file saved at: {csv_save_path}")
 
