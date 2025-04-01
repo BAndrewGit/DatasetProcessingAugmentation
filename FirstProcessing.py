@@ -2,6 +2,8 @@ import traceback
 import pandas as pd
 import numpy as np
 import re
+
+import unicodedata
 from scipy.stats import truncnorm
 from sklearn.cluster import KMeans
 from tkinter import Tk, filedialog
@@ -129,113 +131,73 @@ def normalize_and_translate_data(df):
         df["Impulse_Buying_Reason"] = df["Impulse_Buying_Reason"].replace(impulse_r_map)
 
     # Mapping for multi-value columns translation
-    savings_map = {
-        "Economii pentru achiziții majore (locuință, mașină)": "Savings_Goal_Major_Purchases",
-        "Siguranță financiară pentru pensionare": "Savings_Goal_Retirement",
-        "Fond de urgență": "Savings_Goal_Emergency_Fund",
-        "Educația copiilor": "Savings_Goal_Child_Education",
-        "Vacanțe sau cumpărături mari": "Savings_Goal_Vacation",
-        "Altceva": "Savings_Goal_Other"
+    multiple_val_map = {
+        "Savings_Goal": {
+            "Economii pentru achiziții majore (locuință, mașină)": "Major_Purchases",
+            "Siguranță financiară pentru pensionare": "Retirement",
+            "Fond de urgență": "Emergency_Fund",
+            "Educația copiilor": "Child_Education",
+            "Vacanțe sau cumpărături mari": "Vacation",
+            "Altceva": "Other"
+        },
+        "Savings_Obstacle": {
+            "Altceva": "Other",
+            "Venitul este insuficient": "Insufficient_Income",
+            "Alte cheltuieli urgente au prioritate": "Other_Expenses",
+            "Nu consider economiile o prioritate": "Not_Priority"
+        },
+        "Expense_Distribution": {
+            "Alimentație": "Food",
+            "Locuință (chirie, utilități)": "Housing",
+            "Transport": "Transport",
+            "Divertisment și timp liber (iesiri cu prietenii, hobby-uri, excursii)": "Entertainment",
+            "Sănătate (consultații medicale, medicamente, fizioterapie)": "Health",
+            "Aspect personal (salon, cosmetice, haine, fitness)": "Personal_Care",
+            "Cheltuieli generale pentru copii (îmbrăcăminte, activități extrașcolare)": "Child_Education",
+            "Alte cheltuieli": "Other"
+        },
+        "Credit_Usage": {
+            "Da, pentru cheltuieli esențiale (locuință, hrană)": "Essential_Needs",
+            "Da, pentru cheltuieli mari (ex. vacanțe, electronice, autoturism, imobil etc.)": "Major_Purchases",
+            "Da, pentru cheltuieli mari (ex. vacanțe, electronice)": "Major_Purchases",
+            "Da, pentru cheltuieli neprevăzute dar inevitabile (ex. sănătate, reparații)": "Unexpected_Expenses",
+            "Da, pentru nevoi personale (ex. evenimente speciale, educație)": "Personal_Needs",
+            "Nu am folosit niciodată": "Never_Used"
+        }
     }
 
-    expense_map = {
-        "Alimentație": "Expense_Distribution_Food",
-        "Locuință (chirie, utilități)": "Expense_Distribution_Housing",
-        "Transport": "Expense_Distribution_Transport",
-        "Divertisment și timp liber (iesiri cu prietenii, hobby-uri, excursii)": "Expense_Distribution_Entertainment",
-        "Sănătate (consultații medicale, medicamente, fizioterapie)": "Expense_Distribution_Health",
-        "Aspect personal (salon, cosmetice, haine, fitness)": "Expense_Distribution_Personal_Care",
-        "Cheltuieli generale pentru copii (îmbrăcăminte, activități extrașcolare)": "Expense_Distribution_Child_Education",
-        "Alte cheltuieli": "Expense_Distribution_Other"
-    }
-
-    savings_obstacle_map = {
-        "Altceva": "Savings_Obstacle_Other",
-        "Venitul este insuficient": "Savings_Obstacle_Insufficient_Income",
-        "Alte cheltuieli urgente au prioritate": "Savings_Obstacle_Other_Expenses",
-        "Nu consider economiile o prioritate": "Savings_Obstacle_Not_Priority"
-    }
-
-    credit_map = {
-        "Da, pentru cheltuieli esențiale (locuință, hrană)": "Credit_Essential_Needs",
-        "Da, pentru cheltuieli mari (ex. vacanțe, electronice)": "Credit_Major_Purchases",
-        "Da, pentru cheltuieli neprevăzute dar inevitabile (ex. sănătate, reparații)": "Credit_Unexpected_Expenses",
-        "Da, pentru nevoi personale (ex. evenimente speciale, educație)": "Credit_Personal_Needs",
-        "Nu am folosit niciodată": "Credit_Never_Used"
-    }
-
-    # Columns for one-hot encoding of multi-value fields
-    one_hot_columns = {
-        "Savings_Goal": [
-            "Savings_Goal_Emergency_Fund",
-            "Savings_Goal_Major_Purchases",
-            "Savings_Goal_Child_Education",
-            "Savings_Goal_Vacation",
-            "Savings_Goal_Retirement",
-            "Savings_Goal_Other"
-        ],
-        "Savings_Obstacle": [
-            "Savings_Obstacle_Insufficient_Income",
-            "Savings_Obstacle_Other_Expenses",
-            "Savings_Obstacle_Not_Priority",
-            "Savings_Obstacle_Other"
-        ],
-        "Expense_Distribution": [
-            "Expense_Distribution_Food",
-            "Expense_Distribution_Housing",
-            "Expense_Distribution_Transport",
-            "Expense_Distribution_Entertainment",
-            "Expense_Distribution_Health",
-            "Expense_Distribution_Personal_Care",
-            "Expense_Distribution_Child_Education",
-            "Expense_Distribution_Other"
-        ],
-        "Credit_Usage": [
-            "Credit_Essential_Needs",
-            "Credit_Major_Purchases",
-            "Credit_Unexpected_Expenses",
-            "Credit_Personal_Needs",
-            "Credit_Never_Used"
-        ]
-    }
-
-    # Mapping for one-hot translation per column
-    one_hot_maps = {
-        "Savings_Goal": savings_map,
-        "Savings_Obstacle": savings_obstacle_map,
-        "Expense_Distribution": expense_map,
-        "Credit_Usage": credit_map
-    }
-
-    # Helper function to translate multi-value entries
-    def sub_translate(col_name, text):
-        if pd.isnull(text):
-            return text
-        comps = text.split(';')
-        current_map = one_hot_maps.get(col_name, {})
-        mapped = [current_map.get(c.strip(), c.strip()) for c in comps]
-        return ';'.join(mapped)
-
-    # Process each multi-value column: clean, translate and one-hot encode
-    for col, new_cols in one_hot_columns.items():
+    # Translate multi-value columns and encode binary strings
+    for col, translations in multiple_val_map.items():
         if col in df.columns:
-            # Clean spaces around delimiters
-            df[col] = df[col].str.replace(r'\s*;\s*', ';', regex=True).str.strip()
-            # Translate each element
-            df[col] = df[col].apply(lambda x: sub_translate(col, x))
-            # One-hot encode the values
-            dummies = df[col].str.get_dummies(';')
-            dummies = dummies.reindex(columns=new_cols, fill_value=0)
-            df = pd.concat([df, dummies], axis=1)
-            df.drop(columns=[col], inplace=True)
+            # Replace only ', ' followed by uppercase or digit (to avoid internal commas)
+            df[col] = df[col].str.replace(r', (?=[A-ZĂÎȘȚÂ])', '; ', regex=True).str.strip()
 
+            def translate_text(cell):
+                if pd.isnull(cell):
+                    return cell
+                return '; '.join(translations.get(part.strip(), part.strip()) for part in cell.split('; '))
+
+            df[col] = df[col].apply(translate_text)
+
+            # Binary encoding
+            options = list(translations.values())
+
+            # Create encoded version: binary string (e.g., "101010")
+            options = list(translations.values())
+
+            def encode_binary(cell):
+                if pd.isnull(cell):
+                    return '0' * len(options)
+                parts = [p.strip() for p in str(cell).split(',')]
+                return ''.join(['1' if option in parts else '0' for option in options])
+
+            df[col + "_encoded"] = df[col].apply(encode_binary)
     return df
 
 
 # Post-process data: encode ordinal/nominal values, convert types and impute missing data
 def postprocess_data(df):
     try:
-        # Map ordinal categorical columns to numeric values
         ordinal_mappings = {
             'Impulse_Buying_Frequency': {
                 'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
@@ -247,49 +209,35 @@ def postprocess_data(df):
                 'Rarely or never': 1, 'Monthly': 2, 'Weekly': 3, 'Daily': 4
             }
         }
-
         for col, mapping in ordinal_mappings.items():
-            df[col] = df[col].map(mapping).fillna(0).astype(int)
+            if col in df.columns:
+                df[col] = df[col].map(mapping).fillna(0).astype(int)
 
-        # One-hot encode nominal categorical columns with less than 10 unique values
-        nominal_cols = [
-            'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
-            'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason',
-            'Financial_Investments', 'Savings_Obstacle'
-        ]
+        nominal_cols = ['Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
+                        'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Financial_Investments']
         nominal_cols = [col for col in nominal_cols if col in df.columns]
-
         for col in nominal_cols:
-            if df[col].nunique() < 10:
-                dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
-                df = pd.concat([df, dummies], axis=1)
-                df.drop(columns=[col], inplace=True)
+            dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
+            df = pd.concat([df, dummies], axis=1)
+            df.drop(columns=[col], inplace=True)
 
-        # Convert Credit_* columns to binary (1 or 0)
         credit_cols = [c for c in df.columns if c.startswith('Credit_')]
         for col in credit_cols:
             df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
 
-        # Convert remaining object columns to numeric; drop if conversion fails
         for col in df.select_dtypes(include=['object']).columns:
             try:
-                df[col] = pd.to_numeric(df[col], errors='raise')
+                df[col] = pd.to_numeric(df[col])
             except:
                 df.drop(columns=[col], inplace=True)
 
-        # Impute missing values: median for numeric, mode for non-numeric
         for col in df.columns:
             if df[col].isna().sum() > 0:
-                if df[col].dtype in ['int64', 'float64']:
-                    df[col] = df[col].fillna(df[col].median())
-                else:
-                    df[col] = df[col].fillna(df[col].mode()[0])
+                df[col] = df[col].fillna(df[col].median())
 
         return df
-
     except Exception as e:
         print(f"Critical preprocessing error: {str(e)}")
-        traceback.print_exc()
         return None
 
 
@@ -297,29 +245,28 @@ def postprocess_data(df):
 def calculate_risk(df, threshold=None):
     try:
         numeric_cols = [
-            'Income_Category', 'Essential_Needs_Percentage',
-            'Expense_Distribution_Entertainment', 'Debt_Level',
-            'Savings_Goal_Emergency_Fund'
+            'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
         ]
-        # Convert specified columns to numeric
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Compute risk score as weighted sum of conditions
+        # Decode binary string into presence of specific flags
+        df['has_entertainment'] = df['Expense_Distribution_encoded'].astype(str).str[3].fillna('0').astype(int)
+        df['has_emergency_fund'] = df['Savings_Goal_encoded'].astype(str).str[2].fillna('0').astype(int)
+
+        # Compute risk score
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
-            (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
+            (df['has_entertainment'] == 1) * CONFIG['risk_weights'][1],
             (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
-            (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
+            (df['has_emergency_fund'] == 0) * CONFIG['risk_weights'][3]
         ]
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # Scale risk score to normalize differences in scale
         scaler = MinMaxScaler()
         df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
 
-        # Determine dynamic threshold using KMeans clustering if not provided
         if threshold is None:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
@@ -328,12 +275,11 @@ def calculate_risk(df, threshold=None):
             print(f"Dynamic threshold (KMeans) [scaled]: {threshold_scaled:.2f}")
             threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
 
-        # Label behavior based on risk score and threshold
         df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
-
-        # Remove auxiliary columns
-        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label'], inplace=True)
+        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label',
+                         'has_entertainment', 'has_emergency_fund'], inplace=True)
         return df, threshold
+
     except Exception as e:
         print(f"Error calculating risk score: {e}")
         return None, None
@@ -342,30 +288,27 @@ def calculate_risk(df, threshold=None):
 # Progressive risk calculation with iterative clustering and confidence labeling
 def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_iter=3):
     try:
-        # Convert relevant columns to numeric
         numeric_cols = [
-            'Income_Category', 'Essential_Needs_Percentage',
-            'Expense_Distribution_Entertainment', 'Debt_Level',
-            'Savings_Goal_Emergency_Fund'
+            'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
         ]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Compute risk score as weighted sum of conditions
+        df['has_entertainment'] = df['Expense_Distribution_encoded'].astype(str).str[3].fillna('0').astype(int)
+        df['has_emergency_fund'] = df['Savings_Goal_encoded'].astype(str).str[2].fillna('0').astype(int)
+
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
             ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
-            (df['Expense_Distribution_Entertainment'] > 25) * CONFIG['risk_weights'][1],
+            (df['has_entertainment'] == 1) * CONFIG['risk_weights'][1],
             (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
-            (df['Savings_Goal_Emergency_Fund'] == 0) * CONFIG['risk_weights'][3]
+            (df['has_emergency_fund'] == 0) * CONFIG['risk_weights'][3]
         ]
         df['Risk_Score'] = np.sum(conditions, axis=0)
 
-        # Scale risk score for clustering
         scaler = MinMaxScaler()
         df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
 
-        # Determine initial threshold with clustering if not provided
         if threshold is None:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
@@ -374,20 +317,16 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
             threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
             print(f"Initial dynamic threshold (scaled): {threshold_scaled:.2f} -> threshold: {threshold:.2f}")
 
-        # Initialize risk labels as uncertain (-1)
         df['Behavior_Risk_Level'] = -1
 
-        # Iterative labeling based on confidence (distance to cluster centroid)
         for i in range(max_iter):
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
             centroids = kmeans.cluster_centers_
-
-            # Calculate distance from each point to its cluster centroid
             df['Distance_to_Centroid'] = df.apply(
-                lambda row: abs(row['Risk_Score_scaled'] - centroids[int(row['Cluster_Label'])][0]), axis=1)
+                lambda row: abs(row['Risk_Score_scaled'] - centroids[int(row['Cluster_Label'])][0]), axis=1
+            )
 
-            # Label points with high confidence (distance within threshold)
             high_confidence = df['Distance_to_Centroid'] <= distance_threshold
             df.loc[high_confidence, 'Behavior_Risk_Level'] = np.where(
                 df.loc[high_confidence, 'Risk_Score'] >= threshold, 1, 0
@@ -398,8 +337,10 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
             if num_uncertain < 0.05 * len(df):
                 break
 
-        # Remove auxiliary columns
-        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label', 'Distance_to_Centroid'], inplace=True)
+        df.drop(columns=[
+            'Risk_Score', 'Risk_Score_scaled', 'Cluster_Label',
+            'Distance_to_Centroid', 'has_entertainment', 'has_emergency_fund'
+        ], inplace=True)
         return df, threshold
 
     except Exception as e:
@@ -486,7 +427,7 @@ def random_income(value):
         random_value = np.random.randint(lower // 100, (upper // 100) + 1) * 100
         return random_value
     try:
-        return int(value) // 100 * 100  # Round to nearest hundred
+        return int(value) // 100 * 100  # Round to nearest 100
     except:
         return value
 
@@ -671,12 +612,6 @@ def main():
         return
 
     try:
-        # Optional test for random_essential_needs function
-        test_values = ["<50%", "50-75%", ">75%", "45", "80%", "50-abc", "NaN", "invalid"]
-        for val in test_values:
-            result = random_essential_needs(val)
-            print(f"Input: {val} => Output: {result}")
-
         print(f"Loading file: {file_path}")
         df = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
 
@@ -688,27 +623,31 @@ def main():
             df,
             age_column="Age",
             income_column="Income_Category",
-            lifetime_columns=["Product_Lifetime_Clothing", "Product_Lifetime_Tech",
-                              "Product_Lifetime_Appliances", "Product_Lifetime_Cars"]
+            lifetime_columns=[
+                "Product_Lifetime_Clothing", "Product_Lifetime_Tech",
+                "Product_Lifetime_Appliances", "Product_Lifetime_Cars"
+            ]
         )
 
-        # Keep a copy before post-processing for decoded Excel file
-        df_decoded = df.copy()
+        df_decoded = df.copy()  # Keep original decoded version
+
+        # Șterge explicit coloanele encoded din versiunea decoded:
+        encoded_cols = [col for col in df_decoded.columns if col.endswith('_encoded')]
+        df_decoded.drop(columns=encoded_cols, inplace=True)
 
         print("\n>>> Post-processing data...")
         df = postprocess_data(df)
         if df is None:
             return
 
-        # Scale numeric columns for encoded CSV version
+        # Updated: choose valid numeric columns for scaling
         numeric_cols_to_scale = [
-            'Age', 'Income_Category', 'Essential_Needs_Percentage',
-            'Expense_Distribution_Entertainment', 'Debt_Level', 'Savings_Goal_Emergency_Fund'
+            'Age', 'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
         ]
         df = scale_numeric_columns(df, numeric_cols_to_scale)
 
         print("\n>>> Calculating risk score...")
-        df, risk_threshold = calculate_risk_progressive(df, threshold=None)
+        df, risk_threshold = calculate_risk_progressive(df)
         if df is None:
             return
 
@@ -725,13 +664,12 @@ def main():
             print("- Review input data")
             return
 
-        # Decode risk levels for Excel file: 0 -> "Beneficial", 1 -> "Risky"
-        def decode_risk_level(x):
-            return "Risky" if x == 1 else "Beneficial"
+        # Convert risk level to label for decoded file
+        df_decoded['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].apply(
+            lambda x: "Risky" if x == 1 else "Beneficial"
+        )
 
-        df_decoded['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].apply(decode_risk_level)
-
-        # Select save location for decoded Excel file
+        # Select save location
         Tk().withdraw()
         excel_save_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -742,13 +680,13 @@ def main():
             print("No save location selected for Excel.")
             return
 
-        # Save decoded Excel file
+        # Save Excel file
         with pd.ExcelWriter(excel_save_path, engine='openpyxl') as writer:
             df_decoded.to_excel(writer, index=False, sheet_name='Decoded_Data')
             auto_adjust_column_width(writer, 'Decoded_Data')
         print(f"Decoded Excel file saved at: {excel_save_path}")
 
-        # Save encoded CSV file with a modified filename
+        # Save encoded CSV file
         base_name, _ = os.path.splitext(excel_save_path)
         csv_save_path = base_name + "_encoded.csv"
         df.to_csv(csv_save_path, index=False, encoding='utf-8')
