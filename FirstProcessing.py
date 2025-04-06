@@ -1,9 +1,6 @@
-import traceback
 import pandas as pd
 import numpy as np
 import re
-
-import unicodedata
 from scipy.stats import truncnorm
 from sklearn.cluster import KMeans
 from tkinter import Tk, filedialog
@@ -17,6 +14,8 @@ os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 CONFIG = {
     'risk_weights': [0.50, 0.20, 0.15, 0.15]
 }
+
+multi_value_cols = ["Savings_Goal", "Savings_Obstacle", "Expense_Distribution", "Credit_Usage"]
 
 
 # Normalize and translate column names and values
@@ -66,6 +65,7 @@ def normalize_and_translate_data(df):
         "Într-o relație sau căsătorit/ă, cu copii.": "In a relationship/married with children",
         "Într-o relație (coabitare) sau căsătorit/ă, fără copii.": "In a relationship/married without children",
         "Într-o relație sau căsătorit/ă, fără copii.": "In a relationship/married without children",
+        "Altul": "Another",
         "Încerc să găsesc un echilibru": "I try to find a balance",
         "Cheltuiesc mai mult decât câștig": "Spend more than I earn",
         "Sunt disciplinat/ă în economisire": "I am disciplined in saving",
@@ -166,44 +166,44 @@ def normalize_and_translate_data(df):
         }
     }
 
-    # Translate multi-value columns and encode binary strings
+    # Translate multi-value columns and encode binary strings (creăm coloane noi)
     for col, translations in multiple_val_map.items():
-        if col in df.columns:
-            # Replace only ', ' followed by uppercase or digit (to avoid internal commas)
-            df[col] = df[col].str.replace(r', (?=[A-ZĂÎȘȚÂ])', '; ', regex=True).str.strip()
+        if col not in df.columns:
+            continue
 
-            def translate_text(cell):
-                if pd.isnull(cell):
-                    return cell
-                return '; '.join(translations.get(part.strip(), part.strip()) for part in cell.split('; '))
+        # TRADUCERE: păstrează coloana originală cu text tradus
+        df[col] = df[col].apply(lambda x: str(x) if pd.notnull(x) else "")
+        df[col] = df[col].str.replace(r', (?=[A-ZĂÎȘȚÂ])', '; ', regex=True).str.strip()
 
-            df[col] = df[col].apply(translate_text)
+        def translate_text(cell):
+            if cell == "":
+                return cell
+            return '; '.join(translations.get(part.strip(), part.strip()) for part in cell.split('; '))
+        df[col] = df[col].apply(translate_text)
 
-            # Binary encoding
-            options = list(translations.values())
+        # ENCODARE: creăm o coloană nouă cu sufixul '_encoded'
+        options = list(translations.values())
+        def encode_binary(cell):
+            if cell == "":
+                return '0' * len(options)
+            parts = [p.strip() for p in str(cell).split('; ')]
+            encoded = ''.join(['1' if option in parts else '0' for option in options])
+            return encoded.zfill(len(options))
+        df[col + "_encoded"] = df[col].apply(encode_binary)
 
-            # Create encoded version: binary string (e.g., "101010")
-            options = list(translations.values())
-
-            def encode_binary(cell):
-                if pd.isnull(cell):
-                    return '0' * len(options)
-                parts = [p.strip() for p in str(cell).split(',')]
-                return ''.join(['1' if option in parts else '0' for option in options])
-
-            df[col + "_encoded"] = df[col].apply(encode_binary)
     return df
 
 
 # Post-process data: encode ordinal/nominal values, convert types and impute missing data
 def postprocess_data(df):
     try:
+        # Ordinal Encoding numeric explicit
         ordinal_mappings = {
             'Impulse_Buying_Frequency': {
                 'Very rarely': 1, 'Rarely': 2, 'Sometimes': 3, 'Often': 4, 'Very often': 5
             },
             'Debt_Level': {
-                'Difficult to manage': 4, 'Manageable': 3, 'Low': 2, 'Absent': 1, np.nan: 0, 'Unknown': 0
+                'Absent': 1, 'Low': 2, 'Manageable': 3, 'Difficult to manage': 4, np.nan: 0, 'Unknown': 0
             },
             'Bank_Account_Analysis_Frequency': {
                 'Rarely or never': 1, 'Monthly': 2, 'Weekly': 3, 'Daily': 4
@@ -213,27 +213,41 @@ def postprocess_data(df):
             if col in df.columns:
                 df[col] = df[col].map(mapping).fillna(0).astype(int)
 
-        nominal_cols = ['Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
-                        'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Financial_Investments']
-        nominal_cols = [col for col in nominal_cols if col in df.columns]
+        # Nominal One-hot Encoding numeric explicit (fără dummy pentru NaN)
+        nominal_cols = [
+            'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
+            'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Financial_Investments', 'Savings_Obstacle'
+        ]
         for col in nominal_cols:
-            dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
-            df = pd.concat([df, dummies], axis=1)
-            df.drop(columns=[col], inplace=True)
-
-        credit_cols = [c for c in df.columns if c.startswith('Credit_')]
-        for col in credit_cols:
-            df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
-
-        for col in df.select_dtypes(include=['object']).columns:
-            try:
-                df[col] = pd.to_numeric(df[col])
-            except:
+            if col in df.columns:
+                dummies = pd.get_dummies(df[col], prefix=col).astype(int)
+                df = pd.concat([df, dummies], axis=1)
                 df.drop(columns=[col], inplace=True)
 
-        for col in df.columns:
-            if df[col].isna().sum() > 0:
-                df[col] = df[col].fillna(df[col].median())
+        # Pentru coloanele multi-hot, le lăsăm ca string binar (sau le puteți extinde)
+        multi_hot_cols = ['Savings_Goal', 'Expense_Distribution', 'Credit_Usage']
+        for col in multi_hot_cols:
+            # Dacă aveți și coloane separate de encoding (cu sufixul "_encoded"), le puteți procesa
+            if col + "_encoded" in df.columns:
+                # Exemplu: nu extindem, doar lăsăm șirul binar
+                pass
+            else:
+                df[col] = df[col].apply(lambda x: x if isinstance(x, str) else '0'*len(x))
+
+        # Product Lifetime explicit numeric (în luni)
+        lifetime_cols = [
+            'Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
+            'Product_Lifetime_Appliances', 'Product_Lifetime_Cars'
+        ]
+        for col in lifetime_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(df[col].median()).astype(int)
+
+        # Alte coloane strict numerice
+        numeric_cols = ['Age', 'Income_Category', 'Essential_Needs_Percentage'] + lifetime_cols
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(df[col].median()).astype(int)
 
         return df
     except Exception as e:
@@ -294,8 +308,8 @@ def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_i
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        df['has_entertainment'] = df['Expense_Distribution_encoded'].astype(str).str[3].fillna('0').astype(int)
-        df['has_emergency_fund'] = df['Savings_Goal_encoded'].astype(str).str[2].fillna('0').astype(int)
+        df['has_entertainment'] = df['Expense_Distribution'].astype(str).str[3].fillna('0').astype(int)
+        df['has_emergency_fund'] = df['Savings_Goal'].astype(str).str[2].fillna('0').astype(int)
 
         conditions = [
             ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
@@ -438,49 +452,60 @@ def replace_income_category(df, column_name="Income_Category"):
 
 
 # Generate random product lifetime based on input ranges
-def random_product_lifetime(value):
+def random_product_lifetime(value, encoded=False):
     value = str(value).strip()
     if "Not purchased yet" in value:
-        return value
+        return 0 if encoded else value
+
+    # Cazul în care valoarea e exprimată în luni, sub forma "< X months"
     match = re.match(r"<\s*(\d+)\s*months", value, re.IGNORECASE)
     if match:
         upper = int(match.group(1))
         lower = max(1, upper - 3)
         rand_val = np.random.randint(lower, upper)
-        return f"{rand_val} months"
+        return rand_val if encoded else f"{rand_val} months"
+
+    # Cazul în care valoarea este un interval în luni
     if "month" in value.lower():
         match = re.match(r"(\d+)\s*-\s*(\d+)\s*months", value, re.IGNORECASE)
         if match:
             lower, upper = map(int, match.groups())
             rand_val = np.random.randint(lower, upper + 1)
-            return f"{rand_val} months"
+            return rand_val if encoded else f"{rand_val} months"
         match = re.match(r"(\d+)", value)
         if match:
-            return f"{match.group(1)} months"
+            num = int(match.group(1))
+            return num if encoded else f"{num} months"
+
+    # Cazul în care valoarea este exprimată în ani
     if "year" in value.lower():
         match = re.match(r"(\d+)\s*-\s*(\d+)\s*years", value, re.IGNORECASE)
         if match:
             lower, upper = map(int, match.groups())
             rand_val = np.random.randint(lower, upper + 1)
-            return f"{rand_val} years"
+            return rand_val * 12 if encoded else f"{rand_val} years"
         match = re.match(r">\s*(\d+)\s*years", value, re.IGNORECASE)
         if match:
             lower = int(match.group(1))
             upper = lower + 5
             rand_val = np.random.randint(lower, upper + 1)
-            return f"{rand_val} years"
+            return rand_val * 12 if encoded else f"{rand_val} years"
         match = re.match(r"<\s*(\d+)\s*years", value, re.IGNORECASE)
         if match:
             upper = int(match.group(1))
             lower = max(1, upper - 5)
             rand_val = np.random.randint(lower, upper + 1)
-            return f"{rand_val} years"
+            return rand_val * 12 if encoded else f"{rand_val} years"
         return value
 
+    # Fallback
+    return 0 if encoded else value
+
+
 # Replace specified product lifetime columns using random_product_lifetime
-def replace_product_lifetime_columns(df, columns):
+def replace_product_lifetime_columns(df, columns, lifetime_func):
     for col in columns:
-        df[col] = df[col].apply(random_product_lifetime)
+        df[col] = df[col].apply(lambda x: lifetime_func(x))
     return df
 
 
@@ -536,8 +561,7 @@ def replace_essential_needs(df, column_name="Essential_Needs_Percentage"):
 
 # Apply range smoothing on age, income, product lifetime, and essential needs columns
 def range_smoothing(df, age_column="Age", income_column="Income_Category", lifetime_columns=None,
-                    essential_needs_column="Essential_Needs_Percentage"):
-
+                    essential_needs_column="Essential_Needs_Percentage", lifetime_func=None):
     if age_column in df.columns:
         df = replace_age_column(df, age_column)
 
@@ -545,7 +569,10 @@ def range_smoothing(df, age_column="Age", income_column="Income_Category", lifet
         df = replace_income_category(df, income_column)
 
     if lifetime_columns:
-        df = replace_product_lifetime_columns(df, lifetime_columns)
+        if lifetime_func is not None:
+            df = replace_product_lifetime_columns(df, lifetime_columns, lifetime_func)
+        else:
+            df = replace_product_lifetime_columns(df, lifetime_columns, random_product_lifetime)
 
     if essential_needs_column in df.columns:
         df = replace_essential_needs(df, essential_needs_column)
@@ -599,56 +626,92 @@ def check_nan_values(df):
 
 # Main function: file selection, data processing pipeline, and saving results
 def main():
-    Tk().withdraw()  # Hide Tkinter main window
+    Tk().withdraw()  # Ascundem fereastra principală Tkinter
 
-    # Select input CSV file
+    # Selectăm fișierul CSV de intrare
     file_path = filedialog.askopenfilename(
         filetypes=[("CSV files", "*.csv")],
         title="Select a CSV file to process"
     )
-
     if not file_path:
         print("No file selected.")
         return
 
     try:
         print(f"Loading file: {file_path}")
-        df = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
+        df_raw = pd.read_csv(file_path, sep=",", quotechar='"', engine="python")
 
         print("\n>>> Normalizing and translating data...")
-        df = normalize_and_translate_data(df)
+        df_norm = normalize_and_translate_data(df_raw)
 
-        print("\n>>> Applying range smoothing...")
-        df = range_smoothing(
-            df,
+        # Definim lista coloanelor de product lifetime
+        lifetime_cols = [
+            "Product_Lifetime_Clothing", "Product_Lifetime_Tech",
+            "Product_Lifetime_Appliances", "Product_Lifetime_Cars"
+        ]
+
+        # Versiunea DECODIFIED (Excel): folosim coloanele originale cu text tradus
+        df_decoded = df_norm.copy()
+        # Eliminăm coloanele de encoding (care au sufixul '_encoded')
+        encoded_cols = [col for col in df_decoded.columns if col.endswith('_encoded')]
+        if encoded_cols:
+            df_decoded.drop(columns=encoded_cols, inplace=True)
+
+        # Aplicăm range smoothing pe versiunea decoded, folosind funcția care returnează text
+        df_decoded = range_smoothing(
+            df_decoded,
             age_column="Age",
             income_column="Income_Category",
-            lifetime_columns=[
-                "Product_Lifetime_Clothing", "Product_Lifetime_Tech",
-                "Product_Lifetime_Appliances", "Product_Lifetime_Cars"
-            ]
+            lifetime_columns=lifetime_cols,
+            essential_needs_column="Essential_Needs_Percentage",
+            lifetime_func=random_product_lifetime  # versiunea care returnează text
         )
 
-        df_decoded = df.copy()  # Keep original decoded version
+        # Reordonăm coloanele conform ordinii dorite
+        desired_column_order = [
+            'Age', 'Family_Status', 'Gender', 'Income_Category', 'Essential_Needs_Percentage',
+            'Financial_Attitude', 'Budget_Planning', 'Save_Money', 'Savings_Goal', 'Savings_Obstacle',
+            'Expense_Distribution', 'Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
+            'Product_Lifetime_Appliances', 'Product_Lifetime_Cars', 'Impulse_Buying_Frequency',
+            'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Credit_Usage', 'Debt_Level',
+            'Financial_Investments', 'Bank_Account_Analysis_Frequency', 'Behavior_Risk_Level'
+        ]
+        df_decoded = df_decoded[[col for col in desired_column_order if col in df_decoded.columns]]
 
-        # Șterge explicit coloanele encoded din versiunea decoded:
-        encoded_cols = [col for col in df_decoded.columns if col.endswith('_encoded')]
-        df_decoded.drop(columns=encoded_cols, inplace=True)
+        # Versiunea ENCODED (CSV): păstrăm doar coloanele de encoding
+        df_encoded = df_norm.copy()
+        # Ștergem coloanele originale de multi-value pentru care avem și versiuni encoded
+        original_cols = multi_value_cols
+        df_encoded.drop(columns=original_cols, inplace=True, errors='ignore')
+        # Renumim coloanele cu sufixul '_encoded' pentru a elimina sufixul
+        df_encoded.rename(columns=lambda x: x.replace('_encoded', ''), inplace=True)
 
-        print("\n>>> Post-processing data...")
-        df = postprocess_data(df)
-        if df is None:
+        # Aplicăm range smoothing pe versiunea encoded, folosind funcția care returnează valori numerice (în luni)
+        df_encoded = range_smoothing(
+            df_encoded,
+            age_column="Age",
+            income_column="Income_Category",
+            lifetime_columns=lifetime_cols,
+            essential_needs_column="Essential_Needs_Percentage",
+            lifetime_func=lambda x: random_product_lifetime(x, encoded=True)
+        )
+
+        print("\n>>> Post-processing data (encoded version)...")
+        df_encoded = postprocess_data(df_encoded)
+        if df_encoded is None:
             return
 
-        # Updated: choose valid numeric columns for scaling
+        # Scalăm coloanele numerice
         numeric_cols_to_scale = [
-            'Age', 'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
+            'Age', 'Income_Category', 'Essential_Needs_Percentage',
+            'Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
+            'Product_Lifetime_Appliances', 'Product_Lifetime_Cars'
         ]
-        df = scale_numeric_columns(df, numeric_cols_to_scale)
+        df_encoded = scale_numeric_columns(df_encoded, numeric_cols_to_scale)
 
         print("\n>>> Calculating risk score...")
-        df, risk_threshold = calculate_risk_progressive(df)
-        if df is None:
+        df_encoded, risk_threshold = calculate_risk_progressive(df_encoded)
+        if df_encoded is None:
             return
 
         print(f"\n🔹 Global threshold: {risk_threshold:.2f}")
@@ -656,20 +719,20 @@ def main():
             f.write(f"{risk_threshold:.2f}")
 
         print("\nRisk distribution:")
-        print(df['Behavior_Risk_Level'].value_counts(dropna=False))
-        if len(df['Behavior_Risk_Level'].unique()) == 1:
+        print(df_encoded['Behavior_Risk_Level'].value_counts(dropna=False))
+        if len(df_encoded['Behavior_Risk_Level'].unique()) == 1:
             print("\nNot enough risk variation for analysis!")
             print("Possible solutions:")
             print("- Adjust CONFIG['risk_weights']")
             print("- Review input data")
             return
 
-        # Convert risk level to label for decoded file
-        df_decoded['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].apply(
+        # Pentru versiunea decoded, convertim nivelul de risc în etichete text
+        df_decoded['Behavior_Risk_Level'] = df_encoded['Behavior_Risk_Level'].apply(
             lambda x: "Risky" if x == 1 else "Beneficial"
         )
 
-        # Select save location
+        # Salvăm versiunea decoded ca fișier Excel
         Tk().withdraw()
         excel_save_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -680,16 +743,15 @@ def main():
             print("No save location selected for Excel.")
             return
 
-        # Save Excel file
         with pd.ExcelWriter(excel_save_path, engine='openpyxl') as writer:
             df_decoded.to_excel(writer, index=False, sheet_name='Decoded_Data')
             auto_adjust_column_width(writer, 'Decoded_Data')
         print(f"Decoded Excel file saved at: {excel_save_path}")
 
-        # Save encoded CSV file
+        # Salvăm versiunea encoded ca fișier CSV
         base_name, _ = os.path.splitext(excel_save_path)
         csv_save_path = base_name + "_encoded.csv"
-        df.to_csv(csv_save_path, index=False, encoding='utf-8')
+        df_encoded.to_csv(csv_save_path, index=False, encoding='utf-8')
         print(f"Encoded CSV file saved at: {csv_save_path}")
 
         print("\nProcessing complete!")
