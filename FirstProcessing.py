@@ -287,50 +287,68 @@ def postprocess_data(df):
 
 
 # Calculate risk score using weighted conditions and clustering
-def calculate_risk(df, threshold=None):
-    try:
-        numeric_cols = [
-            'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
-        ]
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+def calculate_risk_clusters(df, cluster_range=(2, 8)):
+    config = {
+        'weights': {
+            'Debt_Level': 0.25,
+            'Impulse_Buying_Frequency': 0.15,
+            'Essential_Needs_Percentage': -0.2,
+            'Savings_Goal_Emergency_Fund': 0.1,
+            'Bank_Account_Analysis_Frequency': -0.1
+        }
+    }
 
-        # Decode binary string into presence of specific flags
-        df['has_entertainment'] = df['Expense_Distribution_encoded'].astype(str).str[3].fillna('0').astype(int)
-        df['has_emergency_fund'] = df['Savings_Goal_encoded'].astype(str).str[2].fillna('0').astype(int)
+    # exact ca în calculate_risk_advanced
+    def calculate_risk_score(df_local):
+        scaler = RobustScaler()
+        scaled = scaler.fit_transform(df_local[config['weights'].keys()])
+        return pd.Series(np.dot(scaled, list(config['weights'].values())), index=df_local.index)
 
-        # Compute risk score
-        conditions = [
-            ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
-            ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
-            (df['has_entertainment'] == 1) * CONFIG['risk_weights'][1],
-            (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
-            (df['has_emergency_fund'] == 0) * CONFIG['risk_weights'][3]
-        ]
-        df['Risk_Score'] = np.sum(conditions, axis=0)
+    df = df.copy()
+    df['Risk_Score'] = calculate_risk_score(df)
 
-        scaler = MinMaxScaler()
-        df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
+    best_score = -1
+    best_n_clusters = None
+    best_model = None
+    best_labels = None
 
-        if threshold is None:
-            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
-            risky_cluster = df.groupby('Cluster_Label')['Risk_Score_scaled'].mean().idxmax()
-            threshold_scaled = df[df['Cluster_Label'] == risky_cluster]['Risk_Score_scaled'].min()
-            print(f"Dynamic threshold (KMeans) [scaled]: {threshold_scaled:.2f}")
-            threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
+    X = df[['Risk_Score']]
 
-        df['Behavior_Risk_Level'] = np.where(df['Risk_Score'] >= threshold, 1, 0)
-        df.drop(columns=['Risk_Score', 'Risk_Score_scaled', 'Cluster_Label',
-                         'has_entertainment', 'has_emergency_fund'], inplace=True)
-        return df, threshold
+    for n_clusters in range(cluster_range[0], cluster_range[1] + 1):
+        model = BayesianGaussianMixture(n_components=n_clusters, max_iter=500, random_state=42)
+        labels = model.fit_predict(X)
 
-    except Exception as e:
-        print(f"Error calculating risk score: {e}")
-        return None, None
+        try:
+            score = silhouette_score(X, labels)
+            print(f"Clusters={n_clusters}: Silhouette Score={score:.3f}")
+        except Exception as e:
+            print(f"Silhouette calculation failed for {n_clusters} clusters: {e}")
+            continue
+
+        if score > best_score:
+            best_score = score
+            best_n_clusters = n_clusters
+            best_model = model
+            best_labels = labels
+
+    if best_model is None:
+        raise Exception("No valid clustering found.")
+
+    print(f"\nBest clustering: {best_n_clusters} clusters with Silhouette Score={best_score:.3f}")
+
+    df['Cluster'] = best_labels
+
+    # Etichetare cluster sigur = cel cu scor mediu cel mai mic
+    safe_cluster = df.groupby('Cluster')['Risk_Score'].mean().idxmin()
+    df['Behavior_Risk_Level'] = np.where(df['Cluster'] == safe_cluster, 0, 1)
+
+    print("\nFinal Risk distribution:")
+    print(df['Behavior_Risk_Level'].value_counts())
+
+    return df
 
 
-def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=3):
+def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=4):
     config = {
         'weights': {
             'Debt_Level': 0.25,
@@ -412,6 +430,15 @@ def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=3):
         if row.get('Financial_Investments_Yes, regularly', 0) == 1:
             score += 2
         if row.get('Budget_Planning_Plan budget in detail', 0) == 1:
+            score += 1
+        if row.get('Save_Money_Yes', 0) == 1:
+            score += 1
+        else:
+            if row['Income_Category'] >= 5000:
+                score -= 1
+            else:
+                score -= 0.5
+        if row.get('Relationship_Status_In a relationship/married with children', 0) == 1:
             score += 1
 
         if score >= 2:
