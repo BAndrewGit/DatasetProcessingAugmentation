@@ -1,18 +1,41 @@
 import pandas as pd
 import numpy as np
 import re
+
+import shap
 from scipy.stats import truncnorm
+from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
 from tkinter import Tk, filedialog
+from sklearn.metrics import silhouette_score, classification_report
+from sklearn.mixture import BayesianGaussianMixture
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import MinMaxScaler, RobustScaler
 import os
+from xgboost import XGBClassifier
 
 # Set maximum CPU count for parallel processing
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
 # Configuration for risk weights
 CONFIG = {
-    'risk_weights': [0.50, 0.20, 0.15, 0.15]
+    'weights': {
+        'Budget_Planning_Plan budget in detail': 0.097,
+        'Budget_Planning_Plan only essentials': 0.0805,
+        'Age': 0.0782,
+        'Family_Status_Single, no children': 0.0717,
+        'Financial_Investments_Yes, regularly': 0.0705,
+        'Gender_Male': 0.0682,
+        'Impulse_Buying_Category_Food': 0.0682,
+        'Family_Status_Another': 0.0647,
+        'Impulse_Buying_Reason_Social pressure': 0.0629,
+        'Impulse_Buying_Category_Other': 0.0611,
+        'Gender_Female': 0.0594,
+        'Impulse_Buying_Category_Entertainment': 0.0594,
+        'Savings_Goal': 0.0547,
+        'Savings_Obstacle_0001': 0.0529,
+        'Savings_Obstacle_0010': 0.0506
+    }
 }
 
 multi_value_cols = ["Savings_Goal", "Savings_Obstacle", "Expense_Distribution", "Credit_Usage"]
@@ -181,15 +204,16 @@ def normalize_and_translate_data(df):
             return '; '.join(translations.get(part.strip(), part.strip()) for part in cell.split('; '))
         df[col] = df[col].apply(translate_text)
 
-        # ENCODARE: creăm o coloană nouă cu sufixul '_encoded'
+        # ONE-HOT ENCODING pentru fiecare opțiune validă din dicționar
         options = list(translations.values())
-        def encode_binary(cell):
-            if cell == "":
-                return '0' * len(options)
-            parts = [p.strip() for p in str(cell).split('; ')]
-            encoded = ''.join(['1' if option in parts else '0' for option in options])
-            return encoded.zfill(len(options))
-        df[col + "_encoded"] = df[col].apply(encode_binary)
+        df[col] = df[col].astype(str).str.split(r';\s*')
+
+        for option in options:
+            new_col = f"{col}_{option}"
+            df[new_col] = df[col].apply(lambda x: int(option in x if isinstance(x, list) else []))
+
+        # Ștergem coloana originală dacă nu mai e necesară
+        df.drop(columns=[col], inplace=True)
 
     return df
 
@@ -224,15 +248,22 @@ def postprocess_data(df):
                 df = pd.concat([df, dummies], axis=1)
                 df.drop(columns=[col], inplace=True)
 
-        # Pentru coloanele multi-hot, le lăsăm ca string binar (sau le puteți extinde)
-        multi_hot_cols = ['Savings_Goal', 'Expense_Distribution', 'Credit_Usage']
-        for col in multi_hot_cols:
-            # Dacă aveți și coloane separate de encoding (cu sufixul "_encoded"), le puteți procesa
-            if col + "_encoded" in df.columns:
-                # Exemplu: nu extindem, doar lăsăm șirul binar
-                pass
-            else:
-                df[col] = df[col].apply(lambda x: x if isinstance(x, str) else '0'*len(x))
+        # Extindem coloanele multi-value în coloane binare (multi-label one-hot)
+        multi_hot_map = {
+            'Savings_Goal': ['Major_Purchases', 'Retirement', 'Emergency_Fund', 'Child_Education', 'Vacation', 'Other'],
+            'Savings_Obstacle': ['Insufficient_Income', 'Other_Expenses', 'Not_Priority', 'Other'],
+            'Expense_Distribution': ['Food', 'Housing', 'Transport', 'Entertainment', 'Health', 'Personal_Care',
+                                     'Child_Education', 'Other'],
+            'Credit_Usage': ['Essential_Needs', 'Major_Purchases', 'Unexpected_Expenses', 'Personal_Needs',
+                             'Never_Used']
+        }
+
+        for col, values in multi_hot_map.items():
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.split(r';\s*')
+                for val in values:
+                    df[f"{col}_{val}"] = df[col].apply(lambda x: int(val in x if isinstance(x, list) else []))
+                df.drop(columns=[col], inplace=True)
 
         # Product Lifetime explicit numeric (în luni)
         lifetime_cols = [
@@ -299,67 +330,114 @@ def calculate_risk(df, threshold=None):
         return None, None
 
 
-# Progressive risk calculation with iterative clustering and confidence labeling
-def calculate_risk_progressive(df, threshold=None, distance_threshold=0.1, max_iter=3):
-    try:
-        numeric_cols = [
-            'Income_Category', 'Essential_Needs_Percentage', 'Debt_Level'
-        ]
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=3):
+    config = {
+        'weights': {
+            'Debt_Level': 0.25,
+            'Impulse_Buying_Frequency': 0.15,
+            'Essential_Needs_Percentage': -0.2,
+            'Savings_Goal_Emergency_Fund': 0.1,
+            'Bank_Account_Analysis_Frequency': -0.1
+        },
+        'outlier_contamination': 0.05,
+        'gmm_clusters': 4,
+        'knn_neighbors': 7
+    }
 
-        df['has_entertainment'] = df['Expense_Distribution'].astype(str).str[3].fillna('0').astype(int)
-        df['has_emergency_fund'] = df['Savings_Goal'].astype(str).str[2].fillna('0').astype(int)
+    def calculate_risk_score(df_local):
+        scaler = RobustScaler()
+        scaled = scaler.fit_transform(df_local[config['weights'].keys()])
+        return pd.Series(np.dot(scaled, list(config['weights'].values())), index=df_local.index)
 
-        conditions = [
-            ((df['Income_Category'] < 5000) & (df['Essential_Needs_Percentage'] < 45)) * CONFIG['risk_weights'][0],
-            ((df['Income_Category'] > 7500) & (df['Essential_Needs_Percentage'] > 60)) * -CONFIG['risk_weights'][0],
-            (df['has_entertainment'] == 1) * CONFIG['risk_weights'][1],
-            (df['Debt_Level'] >= 2) * CONFIG['risk_weights'][2],
-            (df['has_emergency_fund'] == 0) * CONFIG['risk_weights'][3]
-        ]
-        df['Risk_Score'] = np.sum(conditions, axis=0)
+    df = df.copy()
+    df['Risk_Score'] = calculate_risk_score(df)
 
-        scaler = MinMaxScaler()
-        df['Risk_Score_scaled'] = scaler.fit_transform(df[['Risk_Score']])
+    iso = IsolationForest(contamination=config['outlier_contamination'], random_state=42)
+    df['Outlier'] = np.where(iso.fit_predict(df[['Risk_Score']]) == -1, 1, 0)
 
-        if threshold is None:
-            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
-            risky_cluster = df.groupby('Cluster_Label')['Risk_Score_scaled'].mean().idxmax()
-            threshold_scaled = df[df['Cluster_Label'] == risky_cluster]['Risk_Score_scaled'].min()
-            threshold = scaler.inverse_transform([[threshold_scaled]])[0][0]
-            print(f"Initial dynamic threshold (scaled): {threshold_scaled:.2f} -> threshold: {threshold:.2f}")
+    bgmm = BayesianGaussianMixture(n_components=config['gmm_clusters'],
+                                   weight_concentration_prior=0.1,
+                                   max_iter=500, random_state=42)
+    df['Cluster'] = bgmm.fit_predict(df[['Risk_Score']])
 
-        df['Behavior_Risk_Level'] = -1
+    safe_cluster = np.argmin(bgmm.means_.flatten())
+    df['Auto_Label'] = np.where(df['Cluster'] == safe_cluster, 0, 1)
 
-        for i in range(max_iter):
-            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-            df['Cluster_Label'] = kmeans.fit_predict(df[['Risk_Score_scaled']])
-            centroids = kmeans.cluster_centers_
-            df['Distance_to_Centroid'] = df.apply(
-                lambda row: abs(row['Risk_Score_scaled'] - centroids[int(row['Cluster_Label'])][0]), axis=1
-            )
+    knn = KNeighborsClassifier(n_neighbors=config['knn_neighbors'])
+    knn.fit(df[df['Outlier'] == 0][['Risk_Score']], df[df['Outlier'] == 0]['Auto_Label'])
+    df.loc[df['Outlier'] == 1, 'Auto_Label'] = knn.predict(df[df['Outlier'] == 1][['Risk_Score']])
 
-            high_confidence = df['Distance_to_Centroid'] <= distance_threshold
-            df.loc[high_confidence, 'Behavior_Risk_Level'] = np.where(
-                df.loc[high_confidence, 'Risk_Score'] >= threshold, 1, 0
-            )
+    df['Confidence'] = 1.0
+    df['Behavior_Risk_Level'] = -1
 
-            num_uncertain = np.sum(df['Behavior_Risk_Level'] == -1)
-            print(f"Iteration {i + 1}: {num_uncertain} instances remain uncertain.")
-            if num_uncertain < 0.05 * len(df):
-                break
+    features = df.columns.difference(['Behavior_Risk_Level', 'Confidence', 'Auto_Label'])
+    xgb = XGBClassifier(scale_pos_weight=1.5, max_depth=4, subsample=0.8, eval_metric='logloss', random_state=42)
 
-        df.drop(columns=[
-            'Risk_Score', 'Risk_Score_scaled', 'Cluster_Label',
-            'Distance_to_Centroid', 'has_entertainment', 'has_emergency_fund'
-        ], inplace=True)
-        return df, threshold
+    for iteration in range(iterations):
+        train = df[df['Behavior_Risk_Level'] != -1]
+        if len(train) < 10:
+            train = df[df['Confidence'] > confidence_threshold]
 
-    except Exception as e:
-        print(f"Error in progressive risk calculation: {e}")
-        return None, None
+        if len(train) < 10:
+            print(f"Iteration {iteration + 1}: not enough high-confidence samples, stopping...")
+            break
+
+        print(f"Iteration {iteration + 1}: training on {len(train)} samples...")
+        xgb.fit(train[features], train['Auto_Label'])
+
+        probas = xgb.predict_proba(df.loc[df['Behavior_Risk_Level'] == -1, features])
+        confidences = np.max(probas, axis=1)
+        predictions = xgb.predict(df.loc[df['Behavior_Risk_Level'] == -1, features])
+
+        high_confidence_indices = df.loc[df['Behavior_Risk_Level'] == -1].index[confidences >= confidence_threshold]
+
+        df.loc[high_confidence_indices, 'Behavior_Risk_Level'] = predictions[confidences >= confidence_threshold]
+        df.loc[high_confidence_indices, 'Confidence'] = confidences[confidences >= confidence_threshold]
+
+        explainer = shap.TreeExplainer(xgb)
+        shap_values = explainer.shap_values(train[features])
+        shap_summary = dict(zip(features, np.abs(shap_values).mean(axis=0)))
+        print(f"Iteration {iteration + 1} SHAP Importances:", shap_summary)
+
+        if len(high_confidence_indices) == 0:
+            print(f"Iteration {iteration + 1}: no new high-confidence labels assigned, stopping...")
+            break
+
+    def apply_rules(row):
+        score = 0
+        if row['Income_Category'] >= 15000:
+            score += 2
+        if row['Debt_Level'] == 4:
+            score -= 3
+        if row.get('Financial_Investments_Yes, regularly', 0) == 1:
+            score += 2
+        if row.get('Budget_Planning_Plan budget in detail', 0) == 1:
+            score += 1
+
+        if score >= 2:
+            return 0
+        elif score <= -2:
+            return 1
+        return row['Behavior_Risk_Level']
+
+    df['Behavior_Risk_Level'] = df.apply(apply_rules, axis=1)
+
+    labeled = df[df['Behavior_Risk_Level'] != -1]
+    unlabeled = df[df['Behavior_Risk_Level'] == -1]
+
+    print(f"\nFinal labeled count: {len(labeled)}, Unlabeled (needs manual review): {len(unlabeled)}")
+
+    # Scoring final
+    if len(labeled) > 0:
+        silhouette = silhouette_score(labeled[['Risk_Score']], labeled['Behavior_Risk_Level'])
+        print(f"\nSilhouette Score (final labeled data): {silhouette:.2f}")
+
+        print("\nClassification Report (final labeled data):")
+        print(classification_report(labeled['Auto_Label'], labeled['Behavior_Risk_Level']))
+    else:
+        print("No labeled data available for final scoring.")
+
+    return df
 
 
 # Scale specified numeric columns using RobustScaler
@@ -710,13 +788,10 @@ def main():
         df_encoded = scale_numeric_columns(df_encoded, numeric_cols_to_scale)
 
         print("\n>>> Calculating risk score...")
-        df_encoded, risk_threshold = calculate_risk_progressive(df_encoded)
+        df_encoded = calculate_risk_advanced(df_encoded)
         if df_encoded is None:
             return
 
-        print(f"\n🔹 Global threshold: {risk_threshold:.2f}")
-        with open("global_risk_threshold.txt", "w") as f:
-            f.write(f"{risk_threshold:.2f}")
 
         print("\nRisk distribution:")
         print(df_encoded['Behavior_Risk_Level'].value_counts(dropna=False))
