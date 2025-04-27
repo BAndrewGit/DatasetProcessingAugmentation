@@ -4,7 +4,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from tkinter import Tk, filedialog
 from sklearn.exceptions import ConvergenceWarning
-import warnings
 from sklearn.model_selection import train_test_split, cross_val_score, learning_curve
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -21,6 +20,7 @@ from sklearn.metrics import (
 )
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+import warnings
 import json
 import os
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
@@ -29,7 +29,7 @@ pd.set_option('future.no_silent_downcasting', True)
 CONFIG = {
     'required_columns': [
         'Age', 'Essential_Needs_Percentage', 'Expense_Distribution_Entertainment',
-        'Debt_Level', 'Savings_Goal_Emergency_Fund', 'Behavior_Risk_Level'
+        'Debt_Level', 'Save_Money_Yes', 'Behavior_Risk_Level'
     ],
     'risk_weights': [0.3, 0.25, 0.35, 0.1],
     'test_size': 0.25,
@@ -37,110 +37,10 @@ CONFIG = {
     'min_samples_cluster': 10
 }
 
-
 def load_data():
     Tk().withdraw()
     file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
     return pd.read_csv(file_path) if file_path else None
-
-
-def preprocess_data(df):
-    try:
-        savings_goal_cols = [
-            'Savings_Goal_Emergency_Fund', 'Savings_Goal_Major_Purchases',
-            'Savings_Goal_Child_Education', 'Savings_Goal_Vacation',
-            'Savings_Goal_Retirement', 'Savings_Goal_Other'
-        ]
-
-        savings_obstacle_cols = [
-            'Savings_Obstacle_Insufficient_Income', 'Savings_Obstacle_Other_Expenses',
-            'Savings_Obstacle_Not_Priority', 'Savings_Obstacle_Other'
-        ]
-
-        expense_dist_cols = [
-            'Expense_Distribution_Food', 'Expense_Distribution_Housing',
-            'Expense_Distribution_Transport', 'Expense_Distribution_Entertainment',
-            'Expense_Distribution_Health', 'Expense_Distribution_Personal_Care',
-            'Expense_Distribution_Child_Education', 'Expense_Distribution_Other'
-        ]
-
-        credit_cols = [
-            'Credit_Essential_Needs', 'Credit_Major_Purchases',
-            'Credit_Unexpected_Expenses', 'Credit_Personal_Needs', 'Credit_Never_Used'
-        ]
-
-        passthrough_cols = savings_goal_cols + savings_obstacle_cols + expense_dist_cols + credit_cols
-
-        # Convert durations (e.g. "12 months", "2 years") to numeric (months)
-        duration_cols = ['Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
-                         'Product_Lifetime_Appliances', 'Product_Lifetime_Cars']
-
-        def convert_duration(s):
-            if isinstance(s, str):
-                if 'month' in s:
-                    return int(s.split()[0])
-                elif 'year' in s:
-                    return int(s.split()[0]) * 12
-            return np.nan
-
-        for col in duration_cols:
-            df[col] = df[col].apply(convert_duration)
-
-        numerical_cols = ['Age', 'Income_Category', 'Essential_Needs_Percentage'] + duration_cols
-        ordinal_cols = ['Debt_Level', 'Impulse_Buying_Frequency']
-        nominal_cols = [
-            'Family_Status', 'Gender', 'Financial_Attitude',
-            'Budget_Planning', 'Save_Money',
-            'Impulse_Buying_Category', 'Impulse_Buying_Reason',
-            'Financial_Investments', 'Bank_Account_Analysis_Frequency'
-        ]
-
-        # Fill missing numeric with median
-        for col in numerical_cols:
-            if df[col].isna().any():
-                df[col] = df[col].fillna(df[col].median())
-
-        # Fill missing categorical/ordinal with mode
-        for col in ordinal_cols + nominal_cols:
-            if col == 'Debt_Level':
-                df[col] = df[col].fillna("Absent")
-            else:
-                if df[col].isna().any():
-                    df[col] = df[col].fillna(df[col].mode()[0])
-            df[col] = df[col].astype(str)
-
-        # Convert Debt_Level to ordered categorical codes
-        debt_level_categories = ['Absent', 'Low', 'Manageable', 'Difficult to manage']
-        df['Debt_Level'] = pd.Categorical(df['Debt_Level'], categories=debt_level_categories, ordered=True)
-        df['Debt_Level'] = df['Debt_Level'].cat.codes  # convert to numeric codes
-
-        # Create dummy variables for nominal columns with fewer than 10 unique values
-        nominal_to_dummy = [col for col in nominal_cols if df[col].nunique() < 10]
-        for col in nominal_to_dummy:
-            dummies = pd.get_dummies(df[col], prefix=col, dummy_na=True)
-            df = pd.concat([df, dummies], axis=1)
-            df.drop(columns=[col], inplace=True)
-            nominal_cols.remove(col)
-
-        # Convert credit columns to 0/1
-        credit_cols_in_df = [col for col in df.columns if col.startswith('Credit_')]
-        for col in credit_cols_in_df:
-            df[col] = df[col].apply(lambda x: 1 if x == 1 else 0)
-
-        # Drop or convert any remaining string columns
-        for col in df.select_dtypes(include=['object']).columns:
-            try:
-                df[col] = pd.to_numeric(df[col], errors='raise')
-            except:
-                df.drop(columns=[col], inplace=True)
-
-        return df
-
-    except Exception as e:
-        print(f"Severe error during preprocessing: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 def preprocess_encoded_data(df):
     for col in CONFIG['required_columns']:
@@ -151,8 +51,6 @@ def preprocess_encoded_data(df):
                 else:
                     df[col] = df[col].fillna(df[col].mode()[0])
     return df
-
-
 
 def train_models(df):
     try:
@@ -178,7 +76,6 @@ def train_models(df):
                 class_weight='balanced',
                 random_state=42
             )
-            # SVM key will be added based on convergence below
         }
 
         fallback_flag = False
@@ -193,7 +90,6 @@ def train_models(df):
             )
             svm_model.fit(X_train, y_train)
 
-            # If convergence warnings are raised, increase max_iter
             if any(issubclass(warn.category, ConvergenceWarning) for warn in w):
                 print("⚠️ SVM did not converge! Increasing max_iter to 2000...")
                 svm_model = SVC(
@@ -249,12 +145,6 @@ def train_models(df):
                 'model': model
             }
 
-            if name == 'LogisticRegression':
-                with open("metrici.json", "w") as f:
-                    json.dump(model.coef_.tolist(), f, indent=4)
-                print("\nLogistic Regression coefficients have been saved")
-
-            # Plot confusion matrix
             disp = ConfusionMatrixDisplay(
                 confusion_matrix(y_test, y_pred, normalize='true'),
                 display_labels=['Beneficially', 'Risky']
@@ -263,7 +153,6 @@ def train_models(df):
             plt.title(f'Confusion Matrix - {name}')
             plt.show()
 
-            # Plot ROC curve (if probabilities are available)
             if y_proba is not None:
                 fpr, tpr, thresholds = roc_curve(y_test, y_proba)
                 roc_auc = auc(fpr, tpr)
@@ -282,7 +171,6 @@ def train_models(df):
         print(f"Error training models: {str(e)}")
         return None, None, None, None, None, None
 
-
 def evaluate_overfitting(models, X_train, X_test, y_train, y_test):
     overfit_report = {}
     for name, model in models.items():
@@ -298,102 +186,153 @@ def evaluate_overfitting(models, X_train, X_test, y_train, y_test):
 
     return overfit_report
 
+def select_save_directory():
+    Tk().withdraw()
+    folder_selected = filedialog.askdirectory()
+    return folder_selected if folder_selected else None
 
-def visualize_data(df):
+def save_plot(fig, save_dir, filename):
+    if save_dir:
+        path = os.path.join(save_dir, filename)
+        fig.savefig(path)
+        plt.close(fig)
+
+def visualize_data(df, models_results=None):
     try:
+        save_dir = select_save_directory()
         df_viz = df.copy()
-        df_viz['Behavior_Risk_Label'] = df_viz['Behavior_Risk_Level'].map({0: 'Beneficially', 1: 'Risky'})
+        df_viz['Behavior_Risk_Label'] = df_viz['Behavior_Risk_Level'] \
+            .map({0: 'Beneficially', 1: 'Risky'})
 
         # 1. Risk Level Distribution
-        plt.figure(figsize=(8, 5))
-        sns.countplot(x='Behavior_Risk_Label', data=df_viz, hue='Behavior_Risk_Label', legend=False, palette='Set2')
-        plt.title('Risk Level Distribution')
-        plt.xlabel('Risk Level')
-        plt.ylabel('Number of Cases')
-        plt.show()
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sns.countplot(
+            x='Behavior_Risk_Label', data=df_viz,
+            hue='Behavior_Risk_Label', legend=False,
+            palette='Set2', ax=ax
+        )
+        ax.set_title('Risk Level Distribution')
+        ax.set_xlabel('Risk Level')
+        ax.set_ylabel('Number of Cases')
+        plt.tight_layout()
+        save_plot(fig, save_dir, 'risk_level_distribution.png')
 
         # 2. Distribution of Risk Factors
-        plt.figure(figsize=(10, 6))
-        risk_factors = ['Essential_Needs_Percentage', 'Expense_Distribution_Entertainment', 'Debt_Level']
+        risk_factors = [
+            'Essential_Needs_Percentage',
+            'Expense_Distribution_Entertainment',
+            'Debt_Level',
+            'Save_Money_Yes'
+        ]
+        scaler = StandardScaler()
+        df_viz[risk_factors] = scaler.fit_transform(df_viz[risk_factors])
+
         df_risk = df_viz[risk_factors + ['Behavior_Risk_Label']]
-        df_risk.melt(id_vars='Behavior_Risk_Label', var_name='Factor', value_name='Value') \
-            .pipe(sns.boxplot, x='Factor', y='Value', hue='Behavior_Risk_Label', palette='Set3')
-        plt.title('Distribution of Risk Factors')
-        plt.xlabel('Factor')
-        plt.ylabel('Value')
-        plt.legend(title='Risk Level')
-        plt.show()
+        df_melted = df_risk.melt(
+            id_vars='Behavior_Risk_Label',
+            var_name='Factor',
+            value_name='Value'
+        )
+        # replace underscores with spaces for better readability
+        df_melted['Factor'] = df_melted['Factor'].str.replace('_', ' ')
 
-
-        # 3. Correlation Heatmap
-        numeric_cols = ['Age', 'Essential_Needs_Percentage', 'Debt_Level']
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-        numeric_df = df.select_dtypes(include=['int64', 'float64']).dropna(axis=1, how='all')
-        plt.figure(figsize=(18, 14))
-        sns.heatmap(numeric_df.corr(), cmap='coolwarm', annot=True, fmt=".2f", annot_kws={"size": 8})
-        plt.title('Feature Correlation Heatmap')
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.boxplot(
+            x='Factor', y='Value',
+            hue='Behavior_Risk_Label',
+            data=df_melted,
+            palette='Set3',
+            dodge=True,
+            ax=ax
+        )
+        ax.set_title('Distribution of Risk Factors')
+        ax.set_xlabel('Factor')
+        ax.set_ylabel('Standardized Value')
+        ax.tick_params(axis='x', rotation=45, labelsize=9)
+        ax.legend(
+            title='Risk Level',
+            loc='upper right',
+            fontsize=9,
+            title_fontsize=10
+        )
         plt.tight_layout()
-        plt.show()
+        save_plot(fig, save_dir, 'distribution_risk_factors.png')
 
-        # 4. Pairplot for risk factors (categorical or mixed columns)
-        if len(df_viz['Behavior_Risk_Label'].unique()) > 1:
-            pairplot = sns.pairplot(df_viz, vars=risk_factors, hue='Behavior_Risk_Label', palette='husl')
-            pairplot.fig.subplots_adjust(top=0.92)
-            pairplot.fig.suptitle('Pairplot: Distribution of Risk Factors', fontsize=16)
-            plt.show()
+        # 3. Top Features Correlation Heatmap
+        numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+        corr = df_viz[numeric_cols].corr()
+        # pick top 20 by absolute correlation
+        top_pairs = corr.abs().unstack().sort_values(ascending=False).drop_duplicates()
+        top_features = list({i for i, j in top_pairs.head(20).index})
 
-        # Pairplot for numeric columns only
-        pairplot_numeric = sns.pairplot(df, hue='Behavior_Risk_Level', vars=numeric_cols, palette='husl')
-        pairplot_numeric.fig.subplots_adjust(top=0.92)
-        pairplot_numeric.fig.suptitle('Pairplot: Relationships Among Numeric Features', fontsize=16)
-        plt.show()
+        fig, ax = plt.subplots(figsize=(14, 12))
+        sns.heatmap(
+            df_viz[top_features].corr(),
+            cmap='coolwarm', annot=False, ax=ax
+        )
+        ax.set_title('Top Features Correlation Heatmap')
+        plt.xticks(rotation=90)
+        plt.yticks(rotation=0)
+        plt.tight_layout()
+        save_plot(fig, save_dir, 'top_features_correlation_heatmap.png')
 
-
-        # 5. Learning curve for Logistic Regression
-        from sklearn.linear_model import LogisticRegression
+        # 4. Learning Curve for Logistic Regression
         X_lr = df_viz.drop(columns=['Behavior_Risk_Level', 'Behavior_Risk_Label'])
         y_lr = df_viz['Behavior_Risk_Level']
         train_sizes, train_scores, test_scores = learning_curve(
-            LogisticRegression(max_iter=1000, solver='newton-cg', random_state=42),
-            X_lr, y_lr, cv=5, scoring='f1', train_sizes=np.linspace(0.1, 1.0, 5)
+            LogisticRegression(
+                max_iter=1000,
+                solver='newton-cg',
+                random_state=42
+            ),
+            X_lr, y_lr,
+            cv=5, scoring='f1',
+            train_sizes=np.linspace(0.1, 1.0, 5)
         )
-        plt.figure(figsize=(8, 5))
-        plt.plot(train_sizes, np.mean(train_scores, axis=1), label='Train F1 score')
-        plt.plot(train_sizes, np.mean(test_scores, axis=1), label='CV F1 score')
-        plt.title('Learning Curve for Logistic Regression')
-        plt.xlabel('Number of Training Samples')
-        plt.ylabel('F1 Score')
-        plt.legend(loc='best')
-        plt.show()
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(train_sizes, np.mean(train_scores, axis=1), label='Train F1 score')
+        ax.plot(train_sizes, np.mean(test_scores, axis=1), label='CV F1 score')
+        ax.set_title('Learning Curve for Logistic Regression')
+        ax.set_xlabel('Number of Training Samples')
+        ax.set_ylabel('F1 Score')
+        ax.legend(loc='best')
+        plt.tight_layout()
+        save_plot(fig, save_dir, 'learning_curve_logistic.png')
 
-        # 6. KMeans Clustering
-        scaler = StandardScaler()
-        X_cluster = scaler.fit_transform(df_viz[['Essential_Needs_Percentage', 'Expense_Distribution_Entertainment']])
-        if X_cluster.shape[0] >= CONFIG['min_samples_cluster']:
-            kmeans = KMeans(n_clusters=CONFIG['kmeans_clusters'], random_state=42)
-            clusters = kmeans.fit_predict(X_cluster)
-            df_viz['Cluster'] = clusters
+        # 5. Confusion Matrices & ROC Curves
+        if models_results:
+            for model_name, (model, X_test, y_test) in models_results.items():
+                # confusion matrix
+                fig, ax = plt.subplots(figsize=(7, 6))
+                ConfusionMatrixDisplay.from_estimator(
+                    model, X_test, y_test,
+                    normalize='true', cmap='Blues', ax=ax
+                )
+                ax.set_title(f'Confusion Matrix – {model_name}', pad=20)
+                plt.tight_layout()
+                save_plot(fig, save_dir, f'confusion_matrix_{model_name}.png')
 
-            plt.figure(figsize=(10, 6))
-            sns.scatterplot(x=X_cluster[:, 0], y=X_cluster[:, 1], hue=clusters, palette='viridis',
-                            style=df_viz['Behavior_Risk_Label'], s=100)
-            plt.xlabel('Essential_Needs_Percentage (standardized)')
-            plt.ylabel('Expense_Distribution_Entertainment (standardized)')
-            plt.title('KMeans Clustering: Needs vs. Entertainment Expenses')
-            plt.show()
+                # ROC curve
+                if hasattr(model, "predict_proba"):
+                    y_score = model.predict_proba(X_test)[:, 1]
+                    fpr, tpr, _ = roc_curve(y_test, y_score)
+                    roc_auc = auc(fpr, tpr)
 
-            sil_score = silhouette_score(X_cluster, clusters)
-            print(f"Silhouette Score: {sil_score:.2f}")
-        else:
-            print(f"Too few samples ({X_cluster.shape[0]}) for clustering.")
+                    fig, ax = plt.subplots(figsize=(7, 6))
+                    ax.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
+                    ax.plot([0, 1], [0, 1], 'k--')
+                    ax.set_title(f'ROC Curve – {model_name}', pad=20)
+                    ax.set_xlabel('False Positive Rate')
+                    ax.set_ylabel('True Positive Rate')
+                    ax.legend(loc='lower right')
+                    plt.tight_layout()
+                    save_plot(fig, save_dir, f'roc_curve_{model_name}.png')
 
         return df_viz
 
     except Exception as e:
-        print(f"Error in visualizations: {str(e)}")
+        print(f"Error in visualizations: {e}")
         return None
-
 
 def save_metrics(results, overfit_report, feature_names):
     try:
@@ -424,7 +363,6 @@ def save_metrics(results, overfit_report, feature_names):
     except Exception as e:
         print(f"Error saving metrics: {str(e)}")
 
-
 def main():
     df = load_data()
     if df is None:
@@ -438,10 +376,15 @@ def main():
     if models is None:
         return
 
-    df_viz = visualize_data(df)
+    # Adăugăm dict-ul de modele pentru Confusion și ROC
+    models_results = {
+        name: (model, X_test, y_test) for name, model in models.items()
+    }
+
+    df_viz = visualize_data(df, models_results=models_results)
+
     overfit_report = evaluate_overfitting(models, X_train, X_test, y_train, y_test)
     save_metrics(results, overfit_report, feature_names=X_train.columns)
-
 
 if __name__ == "__main__":
     main()
