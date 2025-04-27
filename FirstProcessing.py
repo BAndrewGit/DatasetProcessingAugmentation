@@ -348,7 +348,7 @@ def calculate_risk_clusters(df, cluster_range=(2, 8)):
     return df
 
 
-def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=4):
+def calculate_risk_advanced(df, gmm_clusters=4, confidence_threshold=0.95, iterations=4):
     config = {
         'weights': {
             'Debt_Level': 0.25,
@@ -358,7 +358,7 @@ def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=4):
             'Bank_Account_Analysis_Frequency': -0.1
         },
         'outlier_contamination': 0.05,
-        'gmm_clusters': 4,
+        'gmm_clusters': gmm_clusters,
         'knn_neighbors': 7
     }
 
@@ -427,6 +427,8 @@ def calculate_risk_advanced(df, confidence_threshold=0.98, iterations=4):
             score += 2
         if row['Debt_Level'] == 4:
             score -= 3
+        if row['Debt_Level'] >= 2 and row['Income_Category'] < 12000:
+             score -= 2
         if row.get('Financial_Investments_Yes, regularly', 0) == 1:
             score += 2
         if row.get('Budget_Planning_Plan budget in detail', 0) == 1:
@@ -815,7 +817,7 @@ def main():
         df_encoded = scale_numeric_columns(df_encoded, numeric_cols_to_scale)
 
         print("\n>>> Calculating risk score...")
-        df_encoded = calculate_risk_advanced(df_encoded)
+        df_encoded = calculate_risk_advanced(df_encoded) # Folosim funcția aleasa pentru a calcula riscul
         if df_encoded is None:
             return
 
