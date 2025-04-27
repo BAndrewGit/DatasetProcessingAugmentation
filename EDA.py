@@ -54,7 +54,8 @@ def preprocess_encoded_data(df):
 
 def train_models(df):
     try:
-        X = df.drop(columns=['Behavior_Risk_Level'])
+        drop_cols = ['Behavior_Risk_Level', 'Risk_Score', 'Cluster', 'Outlier', 'Auto_Label', 'Confidence']
+        X = df.drop(columns=[c for c in drop_cols if c in df.columns])
         y = df['Behavior_Risk_Level']
 
         X_train, X_test, y_train, y_test = train_test_split(
