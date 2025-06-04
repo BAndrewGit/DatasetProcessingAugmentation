@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from sdv.single_table import CTGANSynthesizer
 from sdv.metadata import SingleTableMetadata
-from FirstProcessing import calculate_risk_score
 import os
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
