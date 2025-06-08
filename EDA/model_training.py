@@ -26,20 +26,8 @@ CONFIG = {
 }
 
 # Train multiple classifiers and collect performance metrics
-def train_models(df):
+def train_models(X_train, X_test, y_train, y_test):
     try:
-        drop_cols = ['Behavior_Risk_Level', 'Risk_Score', 'Cluster', 'Outlier', 'Auto_Label', 'Confidence']
-        X = df.drop(columns=[c for c in drop_cols if c in df.columns])
-        y = df['Behavior_Risk_Level']
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            test_size=CONFIG['test_size'],
-            stratify=y,
-            random_state=42
-        )
-
-        # Define initial models
         models = {
             'LogisticRegression': LogisticRegression(
                 class_weight='balanced',
@@ -67,7 +55,7 @@ def train_models(df):
             svm_model.fit(X_train, y_train)
 
             if any(issubclass(warn.category, ConvergenceWarning) for warn in w):
-                print("⚠️ SVM did not converge! Increasing max_iter to 2000...")
+                print("SVM did not converge! Increasing max_iter to 2000...")
                 svm_model = SVC(
                     kernel='linear',
                     probability=True,
@@ -80,9 +68,7 @@ def train_models(df):
                 with warnings.catch_warnings(record=True) as w2:
                     svm_model.fit(X_train, y_train)
                     if any(issubclass(warn.category, ConvergenceWarning) for warn in w2):
-                        print("⚠️ SVM still not converging, switching to SGDClassifier with calibration...")
-                        from sklearn.linear_model import SGDClassifier
-                        from sklearn.calibration import CalibratedClassifierCV
+                        print("SVM still not converging, switching to SGDClassifier with calibration...")
                         base_sgd = SGDClassifier(
                             loss='hinge',
                             max_iter=10000,
@@ -94,7 +80,6 @@ def train_models(df):
                         svm_model.fit(X_train, y_train)
                         fallback_flag = True
 
-        # Register SVM or fallback SGD
         if fallback_flag:
             models['SGDClassifier'] = svm_model
         else:
@@ -102,7 +87,6 @@ def train_models(df):
 
         results = {}
 
-        # Train and evaluate each model
         for name, model in models.items():
             print(f"\nTraining {name}...")
             model.fit(X_train, y_train)
@@ -112,7 +96,7 @@ def train_models(df):
             report = classification_report(y_test, y_pred, target_names=['Beneficially', 'Risky'], output_dict=True)
             auc_score = roc_auc_score(y_test, y_proba) if y_proba is not None else None
             f1 = f1_score(y_test, y_pred)
-            cv_scores = cross_val_score(model, X, y, cv=5, scoring='f1')
+            cv_scores = cross_val_score(model, X_train, y_train, cv=5, scoring='f1')
 
             results[name] = {
                 'classification_report': report,
@@ -123,7 +107,6 @@ def train_models(df):
                 'model': model
             }
 
-            # Confusion matrix
             disp = ConfusionMatrixDisplay(
                 confusion_matrix(y_test, y_pred, normalize='true'),
                 display_labels=['Beneficially', 'Risky']
@@ -132,7 +115,6 @@ def train_models(df):
             plt.title(f'Confusion Matrix - {name}')
             plt.show()
 
-            # ROC curve
             if y_proba is not None:
                 fpr, tpr, thresholds = roc_curve(y_test, y_proba)
                 roc_auc = auc(fpr, tpr)
@@ -145,24 +127,34 @@ def train_models(df):
                 plt.legend(loc="lower right")
                 plt.show()
 
-        return models, results, X_train, X_test, y_train, y_test
+        return models, results
 
     except Exception as e:
         print(f"Error training models: {str(e)}")
-        return None, None, None, None, None, None
+        return None, None
 
 # Compare train/test accuracy for overfitting report
 def evaluate_overfitting(models, X_train, X_test, y_train, y_test):
     overfit_report = {}
+
     for name, model in models.items():
-        train_acc = model.score(X_train, y_train)
-        test_acc = model.score(X_test, y_test)
-        overfit_ratio = train_acc - test_acc
-        overfit_report[name] = {
-            "train_accuracy": train_acc,
-            "test_accuracy": test_acc,
-            "overfit_ratio": overfit_ratio
-        }
-        print(f"{name} - Train accuracy: {train_acc:.3f}, Test accuracy: {test_acc:.3f}, Overfit ratio: {overfit_ratio:.3f}")
+        try:
+            train_acc = model.score(X_train, y_train)
+            test_acc = model.score(X_test, y_test)
+            overfit_ratio = train_acc - test_acc
+
+            overfit_report[name] = {
+                "train_accuracy": round(train_acc, 4),
+                "test_accuracy": round(test_acc, 4),
+                "overfit_ratio": round(overfit_ratio, 4)
+            }
+
+            print(f"{name}:")
+            print(f"  Train accuracy: {train_acc:.3f}")
+            print(f"  Test accuracy : {test_acc:.3f}")
+            print(f"  Overfit ratio : {overfit_ratio:.3f}\n")
+
+        except Exception as e:
+            print(f"Error evaluating model {name}: {str(e)}")
 
     return overfit_report
