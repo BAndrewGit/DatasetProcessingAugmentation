@@ -18,7 +18,7 @@ def save_plot(fig, save_dir, filename):
         plt.close(fig)
 
 # Save metrics to a JSON file
-def save_metrics(results, overfit_report, feature_names):
+def save_metrics(results, overfit_report, feature_names, save_dir=None):
     try:
         metrics = {}
         for name, res in results.items():
@@ -39,10 +39,13 @@ def save_metrics(results, overfit_report, feature_names):
                 sorted_coefs = dict(sorted(coef_dict.items(), key=lambda x: abs(x[1]), reverse=True))
                 metrics[name]['coefficients'] = sorted_coefs
 
-        with open('dataset_metrics.json', 'w') as f:
+        # Determine path
+        output_path = os.path.join(save_dir or '.', 'dataset_metrics.json')
+
+        with open(output_path, 'w') as f:
             json.dump(metrics, f, indent=2)
 
-        print("Extended metrics have been saved to 'dataset_metrics.json'.")
+        print(f"Extended metrics have been saved to '{output_path}'.")
 
     except Exception as e:
         print(f"Error saving metrics: {str(e)}")

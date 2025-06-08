@@ -138,7 +138,7 @@ def visualize_data(df, models_results=None):
                     plt.tight_layout()
                     save_plot(fig, save_dir, f'roc_curve_{model_name}.png')
 
-        return df_viz
+        return df_viz, save_dir
 
     except Exception as e:
         print(f"Error in visualizations: {e}")
