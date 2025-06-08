@@ -165,7 +165,7 @@ class SMOTETomekAugmentation(BaseAugmentation):
         else:
             return False, "repeated"
 
-    def augment(self, df=None, target_count=None, target_total=500):
+    def augment(self, df=None, target_count=None, target_total=2000):
         """
         Two-phase augmentation process:
         1. Balance minority class
@@ -431,27 +431,62 @@ class SMOTETomekAugmentation(BaseAugmentation):
 
 
 if __name__ == "__main__":
-    # Create augmenter instance
+    # Get user choice and convert to boolean immediately
+    choice = input("Do you want to save only synthetic samples? (Y/N): ").strip()
+    SAVE_SYNTHETIC_ONLY = choice.lower() == 'y'
+
+    # Create the augmenter instance
     augmenter = SMOTETomekAugmentation(target_column="Behavior_Risk_Level", random_state=42)
 
-    # Load dataset
+    # Load the original dataset
+    print("\nFile explorer will open to select save location...")
     df = augmenter.load_dataset()
 
     if df is not None:
-        # Run the augmentation
-        X_aug, y_aug, history = augmenter.augment(df)
+        try:
+            # Perform the augmentation
+            X_aug, y_aug, history = augmenter.augment(df)
 
-        # Combine augmented data
-        if X_aug is not None and y_aug is not None:
-            df_aug = pd.concat([X_aug, pd.Series(y_aug, name=augmenter.target_column)], axis=1)
+            if X_aug is not None and y_aug is not None:
+                # Combine augmented features and target into a single DataFrame
+                df_aug = pd.concat([X_aug, pd.Series(y_aug, name=augmenter.target_column)], axis=1)
 
-            # Print results summary
-            print("\nAugmentation Complete!")
-            print(f"Original class distribution: {df[augmenter.target_column].value_counts().to_dict()}")
-            print(f"Augmented class distribution: {pd.Series(y_aug).value_counts().to_dict()}")
-            print(f"Total samples: {len(X_aug)}")
+                if SAVE_SYNTHETIC_ONLY:  # Use the boolean directly
+                    # === FILTER OUT ORIGINAL SAMPLES ===
+                    from pandas.util import hash_pandas_object
 
-            # Save augmented dataset
-            save_dir = select_save_directory()
-            if save_dir:
-                augmenter.save_results(X_aug, y_aug, history, save_dir=save_dir)
+                    # Hash original data rows (excluding target column)
+                    original_hashes = set(hash_pandas_object(df.drop(columns=[augmenter.target_column]), index=False))
+
+                    # Hash augmented data rows (excluding target column)
+                    augmented_hashes = hash_pandas_object(df_aug.drop(columns=[augmenter.target_column]), index=False)
+
+                    # Identify which rows are synthetic
+                    df_aug["is_original"] = augmented_hashes.isin(original_hashes)
+
+                    # Keep only synthetic rows
+                    df_aug = df_aug[~df_aug["is_original"]].drop(columns=["is_original"])
+                    print(f"Saved only synthetic samples: {len(df_aug)} instances")
+                else:
+                    print("\nSaving full augmented dataset including original + synthetic")
+
+                # Summary
+                print("\nAugmentation Complete!")
+                print(f"Original class distribution: {df[augmenter.target_column].value_counts().to_dict()}")
+                print(f"Augmented class distribution: {df_aug[augmenter.target_column].value_counts().to_dict()}")
+                print(f"Total samples: {len(df_aug)}")
+
+                # Choose save location and export
+                try:
+                    save_dir = select_save_directory()
+                    if save_dir:
+                        augmenter.save_results(
+                            df_aug.drop(columns=[augmenter.target_column]),
+                            df_aug[augmenter.target_column],
+                            history,
+                            save_dir=save_dir
+                        )
+                except Exception as e:
+                    print(f"Error during save: {e}")
+        except Exception as e:
+            print(f"Error during augmentation: {e}")
