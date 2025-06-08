@@ -5,7 +5,7 @@ from EDA.preprocessing import preprocess_encoded_data
 from EDA.model_training import train_models, evaluate_overfitting
 from EDA.visualization import visualize_data
 from EDA.file_operations import save_metrics
-
+from EDA.model_training import drop_artificial_features
 
 def main():
     print("Select test dataset (original or full data)...")
@@ -20,6 +20,8 @@ def main():
     if df_train is None:
         print("One dataset selected. Proceeding with split...")
         df_test = preprocess_encoded_data(df_test)
+        df_test = drop_artificial_features(df_test)
+
         if df_test is None:
             return
 
@@ -32,6 +34,10 @@ def main():
         print("Two datasets selected. Using test + train directly.")
         df_test = preprocess_encoded_data(df_test)
         df_train = preprocess_encoded_data(df_train)
+
+        df_test = drop_artificial_features(df_test)
+        df_train = drop_artificial_features(df_train)
+
         if df_test is None or df_train is None:
             return
 
@@ -41,7 +47,7 @@ def main():
         y_test = df_test["Behavior_Risk_Level"]
 
     # Train models
-    df_combined = pd.concat([X_train, y_train], axis=1)  # required for train_models
+    df_combined = pd.concat([X_train, y_train], axis=1)
     models, results, *_ = train_models(X_train, X_test, y_train, y_test)
 
     if models is None:

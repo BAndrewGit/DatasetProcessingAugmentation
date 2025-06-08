@@ -1,9 +1,5 @@
 import os
-
-from EDA import select_save_directory
-
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
-
 import pandas as pd
 import numpy as np
 from imblearn.combine import SMOTETomek
@@ -14,6 +10,7 @@ from sklearn.feature_selection import f_classif
 from sklearn.linear_model import LogisticRegression
 from scipy.spatial.distance import cosine
 from scipy.stats import f_oneway
+from EDA import select_save_directory
 from sklearn.preprocessing import StandardScaler
 import warnings
 
@@ -453,9 +450,12 @@ if __name__ == "__main__":
                 if SAVE_SYNTHETIC_ONLY:
                     from pandas.util import hash_pandas_object
 
+                    columns_to_ignore = ["Risk_Score", "Outlier", "Cluster", "Auto_Label", "Confidence"]
+                    df_filtered = df.drop(columns=columns_to_ignore + [augmenter.target_column], errors='ignore')
+                    df_aug_filtered = df_aug.drop(columns=columns_to_ignore + [augmenter.target_column], errors='ignore')
                     # Hash original data rows (excluding target column)
-                    original_hashes = set(hash_pandas_object(df.drop(columns=[augmenter.target_column]), index=False))
-                    augmented_hashes = hash_pandas_object(df_aug.drop(columns=[augmenter.target_column]), index=False)
+                    original_hashes = set(hash_pandas_object(df_filtered, index=False))
+                    augmented_hashes = hash_pandas_object(df_aug_filtered, index=False)
 
                     # Identify which rows are synthetic
                     df_aug["is_original"] = augmented_hashes.isin(original_hashes)

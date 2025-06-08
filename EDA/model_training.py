@@ -25,6 +25,12 @@ CONFIG = {
     'min_samples_cluster': 10
 }
 
+ARTIFICIAL_COLUMNS = ["Auto_Label", "Cluster", "Confidence", "Outlier", "Risk_Score"]
+
+def drop_artificial_features(df):
+    return df.drop(columns=[col for col in ARTIFICIAL_COLUMNS if col in df.columns])
+
+
 # Train multiple classifiers and collect performance metrics
 def train_models(X_train, X_test, y_train, y_test):
     try:

@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import json
+from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from EDA.data_loading import load_data
 from EDA.file_operations import select_save_directory, save_metrics, save_plot
@@ -21,8 +22,14 @@ class BaseAugmentation:
         return load_data()
 
     def prepare_data(self, df):
-        X = df.drop(columns=[self.target_column])
-        y = df[self.target_column]
+        excluded = ["Risk_Score", "Confidence", "Outlier", "Cluster", "Auto_Label"]
+
+        # Drop excluded columns if they exist
+        df_clean = df.drop(columns=[col for col in excluded if col in df.columns])
+
+        X = df_clean.drop(columns=[self.target_column])
+        y = df_clean[self.target_column]
+
         return X, y
 
     def scale_features(self, X, numeric_cols=None):
