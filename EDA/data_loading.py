@@ -3,10 +3,7 @@ import pandas as pd
 
 # Open file dialog and load CSV
 def load_data():
-    import tkinter as tk
-    from tkinter import filedialog
-
-    root = tk.Tk()
+    root = Tk()
     root.withdraw()
     root.attributes('-topmost', True)
     print("Select the dataset file...")

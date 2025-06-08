@@ -6,8 +6,11 @@ from FirstProcessing.file_operations import auto_adjust_column_width
 
 # Open dialog to choose output folder
 def select_save_directory():
-    Tk().withdraw()
-    folder_selected = filedialog.askdirectory()
+    root = Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    folder_selected = filedialog.askdirectory(parent=root)
+    root.destroy()
     return folder_selected if folder_selected else None
 
 # Save plot to the selected directory

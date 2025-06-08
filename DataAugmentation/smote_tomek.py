@@ -439,7 +439,6 @@ if __name__ == "__main__":
     augmenter = SMOTETomekAugmentation(target_column="Behavior_Risk_Level", random_state=42)
 
     # Load the original dataset
-    print("\nFile explorer will open to select save location...")
     df = augmenter.load_dataset()
 
     if df is not None:
@@ -451,20 +450,15 @@ if __name__ == "__main__":
                 # Combine augmented features and target into a single DataFrame
                 df_aug = pd.concat([X_aug, pd.Series(y_aug, name=augmenter.target_column)], axis=1)
 
-                if SAVE_SYNTHETIC_ONLY:  # Use the boolean directly
-                    # === FILTER OUT ORIGINAL SAMPLES ===
+                if SAVE_SYNTHETIC_ONLY:
                     from pandas.util import hash_pandas_object
 
                     # Hash original data rows (excluding target column)
                     original_hashes = set(hash_pandas_object(df.drop(columns=[augmenter.target_column]), index=False))
-
-                    # Hash augmented data rows (excluding target column)
                     augmented_hashes = hash_pandas_object(df_aug.drop(columns=[augmenter.target_column]), index=False)
 
                     # Identify which rows are synthetic
                     df_aug["is_original"] = augmented_hashes.isin(original_hashes)
-
-                    # Keep only synthetic rows
                     df_aug = df_aug[~df_aug["is_original"]].drop(columns=["is_original"])
                     print(f"Saved only synthetic samples: {len(df_aug)} instances")
                 else:
