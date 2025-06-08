@@ -212,7 +212,7 @@ def full_inverse_transform(preprocessor, X_final, numerical_cols, ordinal_cols, 
 ###############################
 
 def main():
-    df = load_dataset('DatasetOriginal.csv')
+    df = load_dataset('../DatasetOriginal.csv')
     preprocessor, numerical_cols, ordinal_cols, nominal_cols, passthrough_cols = preprocess_data(df)
 
     # Separați X de etichetă y
