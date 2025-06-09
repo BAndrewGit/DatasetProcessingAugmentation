@@ -15,6 +15,8 @@ from FirstProcessing.risk_calculation import calculate_risk_advanced
 from EDA.data_loading import load_data
 from EDA.file_operations import select_save_directory
 from FirstProcessing.file_operations import auto_adjust_column_width
+import warnings
+warnings.filterwarnings("ignore")
 
 class WCGANAugmentation:
     def __init__(self, target_column="Behavior_Risk_Level", step_fraction=0.25, max_size=2000,
@@ -24,7 +26,7 @@ class WCGANAugmentation:
         self.max_size = max_size
         self.random_state = random_state
         self.min_confidence = min_confidence
-        self.device = torch.device("cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.history = []
 
     def prepare_data(self, df):
@@ -79,7 +81,7 @@ class WCGANAugmentation:
         df_train[bool_cols] = df_train[bool_cols].astype(bool)
 
         # Use the metadata object with the synthesizer
-        model = CTGANSynthesizer(metadata, epochs=300, cuda=False)
+        model = CTGANSynthesizer(metadata, epochs=1000,  batch_size=150,  cuda=torch.cuda.is_available())
         model.fit(df_train)
 
         # Use basic sampling without conditions
@@ -142,7 +144,7 @@ class WCGANAugmentation:
         generated_df_filtered = generated_df.iloc[mask].copy()
         generated_df_filtered[self.target_column] = y_gen_filtered
 
-        print(f"🔁 Relabeled {np.sum(mask)} samples, with {changed} changes.")
+        print(f"Relabeled {np.sum(mask)} samples, with {changed} changes.")
         return generated_df_filtered
 
     def validate_new_samples(self, original_df, augmented_df):
@@ -214,7 +216,7 @@ class WCGANAugmentation:
                 'metrics': metrics
             })
 
-            print(f"✅ Validation - F1: {metrics['f1_score']:.3f}, Kappa: {metrics['cohen_kappa']:.3f}, CosSim: {metrics['cosine_similarity']:.3f}")
+            print(f"Validation - F1: {metrics['f1_score']:.3f}, Kappa: {metrics['cohen_kappa']:.3f}, CosSim: {metrics['cosine_similarity']:.3f}")
             df_current = pd.concat([df_current, generated], ignore_index=True)
             gc.collect()
 
@@ -226,7 +228,7 @@ class WCGANAugmentation:
 
 
 if __name__ == "__main__":
-    print("🔧 Using device: CPU (forced)")
+
     augmenter = WCGANAugmentation(
         target_column="Behavior_Risk_Level",
         step_fraction=0.25,
@@ -234,6 +236,8 @@ if __name__ == "__main__":
         random_state=42,
         min_confidence=0.8
     )
+
+    print(f" Using device: {augmenter.device}")
 
     df = load_data()
     if df is not None:
