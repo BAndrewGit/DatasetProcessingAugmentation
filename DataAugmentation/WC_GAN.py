@@ -5,8 +5,10 @@ import pandas as pd
 import numpy as np
 import gc
 import torch
+import time
 from sdv.single_table import CTGANSynthesizer
 from sdv.metadata import Metadata
+from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import cohen_kappa_score, f1_score
 from scipy.spatial.distance import cosine
@@ -26,10 +28,12 @@ class WCGANAugmentation:
         self.max_size = max_size
         self.random_state = random_state
         self.min_confidence = min_confidence
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
         self.history = []
 
     def prepare_data(self, df):
+        excluded = ['Risk_Score', 'Confidence', 'Outlier', 'Cluster', 'Auto_Label']
+        df = df.drop(columns=[col for col in excluded if col in df.columns], errors='ignore')
         return df.drop(columns=[self.target_column]), df[self.target_column]
 
     def build_metadata(self, df):
@@ -74,6 +78,9 @@ class WCGANAugmentation:
 
     def generate_step(self, df_train, n_samples):
         metadata_dict, metadata = self.build_metadata(df_train)
+        # Remove columns not in metadata
+        included_cols = list(metadata_dict['columns'].keys())
+        df_train = df_train[included_cols].copy()
 
         # Process boolean columns
         columns_metadata = metadata_dict["columns"]
@@ -81,7 +88,7 @@ class WCGANAugmentation:
         df_train[bool_cols] = df_train[bool_cols].astype(bool)
 
         # Use the metadata object with the synthesizer
-        model = CTGANSynthesizer(metadata, epochs=1000,  batch_size=150,  cuda=torch.cuda.is_available())
+        model = CTGANSynthesizer(metadata, epochs=1000, batch_size=150, cuda=False)
         model.fit(df_train)
 
         # Use basic sampling without conditions
@@ -147,6 +154,21 @@ class WCGANAugmentation:
         print(f"Relabeled {np.sum(mask)} samples, with {changed} changes.")
         return generated_df_filtered
 
+    def filter_consistency(self, df):
+        if "Save_Money_Yes" not in df.columns or "Save_Money_No" not in df.columns:
+            return df  # nimic de verificat
+
+        goal_cols = [col for col in df.columns if col.startswith("Savings_Goal_")]
+        obs_cols = [col for col in df.columns if col.startswith("Savings_Obstacle_")]
+
+        mask_goal_valid = ~((df["Save_Money_No"] == 1) & (df[goal_cols].any(axis=1)))
+        mask_obs_valid = ~((df["Save_Money_Yes"] == 1) & (df[obs_cols].any(axis=1)))
+
+        consistent_df = df[mask_goal_valid & mask_obs_valid].copy()
+        print(f" Consistency filter: Kept {len(consistent_df)} / {len(df)} samples")
+
+        return consistent_df
+
     def validate_new_samples(self, original_df, augmented_df):
         X_orig, y_orig = self.prepare_data(original_df)
         X_new, y_new = self.prepare_data(augmented_df)
@@ -178,6 +200,8 @@ class WCGANAugmentation:
         }
 
     def save_results(self, df_aug, history, save_dir):
+        bool_cols = df_aug.select_dtypes(include=["bool"]).columns
+        df_aug[bool_cols] = df_aug[bool_cols].astype(int)
         df_aug.to_csv(os.path.join(save_dir, "augmented_dataset_encoded.csv"), index=False)
 
         excel_path = os.path.join(save_dir, "augmented_dataset_encoded.xlsx")
@@ -193,20 +217,26 @@ class WCGANAugmentation:
     def augment_incrementally(self, df):
         df_current = df.copy()
         iteration = 0
+        start_time = time.time()
+
+        iteration_durations = []
+        train_sizes = []
 
         while len(df_current) < self.max_size:
             iteration += 1
+            iter_start = time.time()
             to_add = min(max(1, int(len(df_current) * self.step_fraction)), self.max_size - len(df_current))
 
-            print(f"\nIteration {iteration}: Generating {to_add} samples")
+            print(f"\nIteration {iteration}: Generating {to_add} samples...")
+
             generated = self.generate_step(df_current, to_add)
 
             if self.target_column not in generated.columns:
-                print("Generated samples missing target column. Skipping.")
+                print("Generated samples missing target column. Skipping iteration.")
                 continue
 
-
             generated = self.relabel_confident(df_current, generated)
+            generated = self.filter_consistency(generated)
 
             metrics = self.validate_new_samples(df_current, generated)
             self.history.append({
@@ -216,9 +246,32 @@ class WCGANAugmentation:
                 'metrics': metrics
             })
 
-            print(f"Validation - F1: {metrics['f1_score']:.3f}, Kappa: {metrics['cohen_kappa']:.3f}, CosSim: {metrics['cosine_similarity']:.3f}")
             df_current = pd.concat([df_current, generated], ignore_index=True)
             gc.collect()
+
+            elapsed_iter = time.time() - iter_start
+            total_elapsed = time.time() - start_time
+
+            iteration_durations.append(elapsed_iter)
+            train_sizes.append(len(df_current))
+
+            # ETA realistă pe bază de regresie timp / mărime
+            if len(train_sizes) >= 3:
+                X = np.array(train_sizes).reshape(-1, 1)
+                y = np.array(iteration_durations)
+                reg = LinearRegression().fit(X, y)
+
+                remaining_instances = self.max_size - len(df_current)
+                predicted_time_next = reg.predict([[len(df_current) + to_add]])[0]
+                estimated_remaining = predicted_time_next * (remaining_instances / to_add)
+            else:
+                avg_time = np.mean(iteration_durations)
+                estimated_remaining = avg_time * ((self.max_size - len(df_current)) / to_add)
+
+            print(
+                f"Validation - F1: {metrics['f1_score']:.3f}, Kappa: {metrics['cohen_kappa']:.3f}, CosSim: {metrics['cosine_similarity']:.3f}")
+            print(
+                f"Time: {elapsed_iter:.2f}s | Total: {total_elapsed:.1f}s | ETA: {estimated_remaining:.1f}s | Progress: {len(df_current) / self.max_size * 100:.1f}%")
 
         X_orig, y_orig = self.prepare_data(df)
         X_full, y_full = self.prepare_data(df_current)
@@ -228,7 +281,7 @@ class WCGANAugmentation:
 
 
 if __name__ == "__main__":
-
+    print("Using device: CPU (forced)")
     augmenter = WCGANAugmentation(
         target_column="Behavior_Risk_Level",
         step_fraction=0.25,
@@ -236,8 +289,6 @@ if __name__ == "__main__":
         random_state=42,
         min_confidence=0.8
     )
-
-    print(f" Using device: {augmenter.device}")
 
     df = load_data()
     if df is not None:
