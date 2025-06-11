@@ -149,7 +149,8 @@ class WCGANAugmentation:
 
         # Returnează doar mostrele filtrate
         generated_df_filtered = generated_df.iloc[mask].copy()
-        generated_df_filtered[self.target_column] = y_gen_filtered
+        generated_df_filtered[self.target_column] = y_gen_filtered.astype(float)
+
 
         print(f"Relabeled {np.sum(mask)} samples, with {changed} changes.")
         return generated_df_filtered
@@ -176,6 +177,9 @@ class WCGANAugmentation:
         clf = LogisticRegression(max_iter=1000, random_state=self.random_state)
         clf.fit(X_orig, y_orig)
         y_pred = clf.predict(X_new)
+
+        y_new = y_new.astype(float)
+        y_pred = y_pred.astype(float)
 
         kappa = cohen_kappa_score(y_new, y_pred)
         f1 = f1_score(y_new, y_pred, average='weighted')
