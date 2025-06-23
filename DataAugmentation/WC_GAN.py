@@ -22,14 +22,21 @@ warnings.filterwarnings("ignore")
 
 class WCGANAugmentation:
     def __init__(self, target_column="Behavior_Risk_Level", step_fraction=0.25, max_size=2000,
-                 random_state=42, min_confidence=0.8):
+                 random_state=42, min_confidence=0.8, generation_buffer=1.5):
+        self.model = None
+        self.metadata = None
         self.target_column = target_column
         self.step_fraction = step_fraction
         self.max_size = max_size
+        self.generation_buffer = generation_buffer
         self.random_state = random_state
         self.min_confidence = min_confidence
         self.device = torch.device("cpu")
         self.history = []
+        self.total_generated = 0
+        self.total_kept_after_confidence = 0
+        self.total_kept_after_consistency = 0
+        self._has_logged_metadata = False
 
     def prepare_data(self, df):
         excluded = ['Risk_Score', 'Confidence', 'Outlier', 'Cluster', 'Auto_Label']
@@ -37,19 +44,18 @@ class WCGANAugmentation:
         return df.drop(columns=[self.target_column]), df[self.target_column]
 
     def build_metadata(self, df):
-        from sdv.metadata import Metadata
-
         excluded_columns = {
             'Risk_Score', 'Confidence', 'Outlier', 'Cluster', 'Auto_Label'
         }
 
-        print(" Generating metadata with manual column type assignment...")
+        # loghează o singură dată, indiferent de când e apelată
+        verbose = not self._has_logged_metadata
+        if verbose:
+            print("Generating metadata with manual column type assignment...")
 
         columns_metadata = {}
-
         for col in df.columns:
             if col in excluded_columns:
-                print(f" Skipping excluded column: {col}")
                 continue
 
             dtype = df[col].dtype
@@ -68,53 +74,44 @@ class WCGANAugmentation:
                 sdtype = 'categorical'
 
             columns_metadata[col] = {'sdtype': sdtype}
-            print(f" {col}: {dtype} → SDV type: {sdtype}")
+            if verbose:
+                print(f" {col}: {dtype} → SDV type: {sdtype}")
+
+        self._has_logged_metadata = True
 
         metadata_dict = {'columns': columns_metadata}
         metadata = Metadata.load_from_dict(metadata_dict)
-
-        # Return both the dictionary and the Metadata object
         return metadata_dict, metadata
 
     def generate_step(self, df_train, n_samples):
         metadata_dict, metadata = self.build_metadata(df_train)
-        # Remove columns not in metadata
         included_cols = list(metadata_dict['columns'].keys())
         df_train = df_train[included_cols].copy()
 
-        # Process boolean columns
-        columns_metadata = metadata_dict["columns"]
-        bool_cols = [col for col, meta in columns_metadata.items() if meta.get("sdtype") == "boolean"]
+        bool_cols = [col for col, meta in metadata_dict["columns"].items() if meta.get("sdtype") == "boolean"]
         df_train[bool_cols] = df_train[bool_cols].astype(bool)
 
-        # Use the metadata object with the synthesizer
         model = CTGANSynthesizer(metadata, epochs=1000, batch_size=150, cuda=False)
         model.fit(df_train)
 
-        # Use basic sampling without conditions
-        print("Generating samples without conditions (not supported in SDV 1.22.1)...")
+        print("Generating samples using freshly trained model...")
         samples = model.sample(n_samples)
 
-        # Manual post-processing to balance classes
         if self.target_column in samples.columns:
-            # Check current distribution
             current_dist = samples[self.target_column].value_counts()
             print(f"Generated distribution: {current_dist.to_dict()}")
 
-            # If very unbalanced, try to adjust
             if min(current_dist) < n_samples * 0.3:
                 print("Attempting to balance classes in generated data...")
-                # Generate more samples and select a balanced subset
                 extra_samples = model.sample(n_samples * 2)
                 all_samples = pd.concat([samples, extra_samples])
 
-                # Select balanced samples from each class
                 balanced = []
                 target_per_class = n_samples // 2
                 for class_val in [0, 1]:
                     class_samples = all_samples[all_samples[self.target_column] == class_val]
                     if len(class_samples) >= target_per_class:
-                        balanced.append(class_samples.sample(target_per_class))
+                        balanced.append(class_samples.sample(target_per_class, random_state=self.random_state))
                     else:
                         balanced.append(class_samples)
 
@@ -222,25 +219,33 @@ class WCGANAugmentation:
         df_current = df.copy()
         iteration = 0
         start_time = time.time()
-
         iteration_durations = []
-        train_sizes = []
+
+        # Tracking counters
+        self.total_generated = 0
+        self.total_kept_after_confidence = 0
+        self.total_kept_after_consistency = 0
 
         while len(df_current) < self.max_size:
             iteration += 1
             iter_start = time.time()
-            to_add = min(max(1, int(len(df_current) * self.step_fraction)), self.max_size - len(df_current))
 
-            print(f"\nIteration {iteration}: Generating {to_add} samples...")
+            remaining = self.max_size - len(df_current)
+            base_step = max(1, int(len(df_current) * self.step_fraction))
+            to_generate = min(int(base_step * self.generation_buffer), remaining * 3)
 
-            generated = self.generate_step(df_current, to_add)
+            print(f"\nIteration {iteration}: Attempting to generate {to_generate} samples...")
 
-            if self.target_column not in generated.columns:
-                print("Generated samples missing target column. Skipping iteration.")
-                continue
+            generated = self.generate_step(df_current, to_generate)
+            self.total_generated += to_generate
 
             generated = self.relabel_confident(df_current, generated)
+            self.total_kept_after_confidence += len(generated)
+
             generated = self.filter_consistency(generated)
+            self.total_kept_after_consistency += len(generated)
+
+            generated = generated.sample(min(len(generated), remaining), random_state=self.random_state)
 
             metrics = self.validate_new_samples(df_current, generated)
             self.history.append({
@@ -255,31 +260,65 @@ class WCGANAugmentation:
 
             elapsed_iter = time.time() - iter_start
             total_elapsed = time.time() - start_time
-
             iteration_durations.append(elapsed_iter)
-            train_sizes.append(len(df_current))
-
-            # ETA realistă pe bază de regresie timp / mărime
-            if len(train_sizes) >= 3:
-                X = np.array(train_sizes).reshape(-1, 1)
-                y = np.array(iteration_durations)
-                reg = LinearRegression().fit(X, y)
-
-                remaining_instances = self.max_size - len(df_current)
-                predicted_time_next = reg.predict([[len(df_current) + to_add]])[0]
-                estimated_remaining = predicted_time_next * (remaining_instances / to_add)
-            else:
-                avg_time = np.mean(iteration_durations)
-                estimated_remaining = avg_time * ((self.max_size - len(df_current)) / to_add)
 
             print(
                 f"Validation - F1: {metrics['f1_score']:.3f}, Kappa: {metrics['cohen_kappa']:.3f}, CosSim: {metrics['cosine_similarity']:.3f}")
             print(
-                f"Time: {elapsed_iter:.2f}s | Total: {total_elapsed:.1f}s | ETA: {estimated_remaining:.1f}s | Progress: {len(df_current) / self.max_size * 100:.1f}%")
+                f"Time: {elapsed_iter:.2f}s | Total: {total_elapsed:.1f}s | Progress: {len(df_current) / self.max_size * 100:.1f}%")
 
-        X_orig, y_orig = self.prepare_data(df)
+        # Final balancing loop with re-training until exact 50/50
+        print("\nBalancing final dataset to 50/50 distribution...")
+        desired_per_class = self.max_size // 2
+
+        for class_val in [0, 1]:
+            while True:
+                current_count = df_current[self.target_column].value_counts().get(class_val, 0)
+                if current_count >= desired_per_class:
+                    break  # această clasă este completă
+
+                to_generate = desired_per_class - current_count
+                to_generate_with_buffer = int(to_generate * self.generation_buffer)
+                print(f"Generating {to_generate_with_buffer} extra samples for class {class_val}...")
+
+                class_subset = df_current[df_current[self.target_column] == class_val]
+                extra = self.generate_step(class_subset, to_generate_with_buffer)
+                self.total_generated += to_generate_with_buffer
+
+                extra = self.relabel_confident(df_current, extra)
+                self.total_kept_after_confidence += len(extra)
+
+                extra = self.filter_consistency(extra)
+                self.total_kept_after_consistency += len(extra)
+
+                extra = extra[extra[self.target_column] == class_val]
+                extra = extra.sample(min(len(extra), to_generate), random_state=self.random_state)
+
+                df_current = pd.concat([df_current, extra], ignore_index=True)
+
+        # Trim to exact 50/50
+        balanced_df = []
+        for class_val in [0, 1]:
+            class_samples = df_current[df_current[self.target_column] == class_val]
+            if len(class_samples) > desired_per_class:
+                class_samples = class_samples.sample(desired_per_class, random_state=self.random_state)
+            balanced_df.append(class_samples)
+
+        df_current = pd.concat(balanced_df, ignore_index=True)
+
+        # Sync labels
         X_full, y_full = self.prepare_data(df_current)
         df_current[self.target_column] = y_full
+
+        # Final Summary
+        final_distribution = df_current[self.target_column].value_counts().to_dict()
+        print("\n=== AUGMENTATION SUMMARY ===")
+        print(f"Total iterations: {iteration}")
+        print(f"Total generated samples (raw): {self.total_generated}")
+        print(f"Kept after confidence filter: {self.total_kept_after_confidence}")
+        print(f"Kept after consistency filter: {self.total_kept_after_consistency}")
+        print(f"Final dataset size: {len(df_current)}")
+        print(f"Final class distribution: {final_distribution}")
 
         return df_current, self.history
 
