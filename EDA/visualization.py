@@ -5,9 +5,11 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import learning_curve
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import ConfusionMatrixDisplay, roc_curve, auc
+from sklearn.metrics import (
+    confusion_matrix, ConfusionMatrixDisplay,
+    roc_curve, auc
+)
 from .file_operations import select_save_directory, save_plot
-
 
 def visualize_data(df, models_results=None):
     try:
@@ -31,7 +33,7 @@ def visualize_data(df, models_results=None):
         plt.tight_layout()
         save_plot(fig, save_dir, 'risk_level_distribution.png')
 
-        # Boxplot of key risk-related features
+        # Boxplot of continuous risk factors
         risk_factors = [
             'Age', 'Income_Category', 'Essential_Needs_Percentage',
             'Debt_Level', 'Product_Lifetime_Clothing',
@@ -74,13 +76,8 @@ def visualize_data(df, models_results=None):
         plt.tight_layout()
         save_plot(fig, save_dir, 'distribution_risk_factors.png')
 
-        # prepare DataFrame for correlation
-        continuous_cols = [
-            'Age', 'Income_Category', 'Essential_Needs_Percentage',
-            'Debt_Level', 'Product_Lifetime_Clothing',
-            'Product_Lifetime_Tech', 'Product_Lifetime_Appliances',
-            'Product_Lifetime_Cars'
-        ]
+        # Correlation heatmap
+        continuous_cols = risk_factors
         bool_cols = [
             'Credit_Usage_Never_Used',
             'Budget_Planning_Plan only essentials',
@@ -90,14 +87,12 @@ def visualize_data(df, models_results=None):
             'Financial_Investments_Yes, occasionally',
             'Savings_Goal_Retirement'
         ]
-
-        # build correlation DataFrame
         corr_df = df_viz[continuous_cols].copy()
         corr_df['Behavior_Risk_Level'] = df_viz['Behavior_Risk_Level']
         for col in bool_cols:
-            corr_df[col] = df_viz[col].astype(int)
+            if col in df_viz:
+                corr_df[col] = df_viz[col].astype(int)
 
-        # plot heatmap
         corr_matrix = corr_df.corr()
         fig, ax = plt.subplots(figsize=(14, 12))
         sns.heatmap(
@@ -119,11 +114,7 @@ def visualize_data(df, models_results=None):
         X_lr = df_viz.drop(columns=['Behavior_Risk_Level', 'Behavior_Risk_Label'])
         y_lr = df_viz['Behavior_Risk_Level']
         train_sizes, train_scores, test_scores = learning_curve(
-            LogisticRegression(
-                max_iter=1000,
-                solver='newton-cg',
-                random_state=42
-            ),
+            LogisticRegression(max_iter=1000, solver='newton-cg', random_state=42),
             X_lr, y_lr,
             cv=5,
             scoring='f1',
@@ -139,27 +130,24 @@ def visualize_data(df, models_results=None):
         plt.tight_layout()
         save_plot(fig, save_dir, 'learning_curve_logistic.png')
 
-        # Confusion matrix and ROC for each model
+        # Confusion matrix and ROC for each model (manual)
         if models_results:
             for model_name, (model, X_test, y_test) in models_results.items():
+                y_pred = model.predict(X_test)
+                # confusion matrix
+                cm = confusion_matrix(y_test, y_pred, normalize='true')
+                disp = ConfusionMatrixDisplay(cm, display_labels=['Beneficially', 'Risky'])
                 fig, ax = plt.subplots(figsize=(7, 6))
-                ConfusionMatrixDisplay.from_estimator(
-                    model,
-                    X_test,
-                    y_test,
-                    normalize='true',
-                    cmap='Blues',
-                    ax=ax
-                )
+                disp.plot(cmap='Blues', ax=ax)
                 ax.set_title(f'Confusion Matrix – {model_name}', pad=20)
                 plt.tight_layout()
                 save_plot(fig, save_dir, f'confusion_matrix_{model_name}.png')
 
+                # ROC curve
                 if hasattr(model, "predict_proba"):
                     y_score = model.predict_proba(X_test)[:, 1]
                     fpr, tpr, _ = roc_curve(y_test, y_score)
                     roc_auc = auc(fpr, tpr)
-
                     fig, ax = plt.subplots(figsize=(7, 6))
                     ax.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
                     ax.plot([0, 1], [0, 1], 'k--')
@@ -174,4 +162,4 @@ def visualize_data(df, models_results=None):
 
     except Exception as e:
         print(f"Error in visualizations: {e}")
-        return None
+        return None, None
