@@ -57,6 +57,8 @@ def visualize_data(df, models_results=None):
             data=df_melted,
             palette='Set3',
             dodge=True,
+            showfliers=False,
+            whis=1.5,
             ax=ax
         )
         ax.set_title('Distribution of Risk Factors')
