@@ -42,6 +42,17 @@ def save_metrics(results, overfit_report, feature_names, save_dir=None):
                 sorted_coefs = dict(sorted(coef_dict.items(), key=lambda x: abs(x[1]), reverse=True))
                 metrics[name]['coefficients'] = sorted_coefs
 
+            if name == 'RandomForest':
+                importances = res['model'].feature_importances_
+                importance_dict = {
+                    feature: round(score, 6)
+                    for feature, score in zip(feature_names, importances)
+                }
+                sorted_importance = dict(
+                    sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
+                )
+                metrics[name]['feature_importance'] = sorted_importance
+
         # Determine path
         output_path = os.path.join(save_dir or '.', 'dataset_metrics.json')
 
