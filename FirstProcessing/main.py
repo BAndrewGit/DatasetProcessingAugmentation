@@ -2,9 +2,10 @@ import pandas as pd
 import os
 from tkinter import Tk, filedialog
 from FirstProcessing.preprocessing import normalize_and_translate_data, postprocess_data, range_smoothing
-from FirstProcessing.risk_calculation import calculate_risk_advanced, scale_numeric_columns
+from FirstProcessing.risk_calculation import calculate_risk_advanced, fit_and_save_scaler, apply_existing_scaler
 from FirstProcessing.data_generation import random_product_lifetime
 from FirstProcessing.file_operations import auto_adjust_column_width
+from pathlib import Path
 
 # Limit parallel processing CPU usage
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
@@ -127,7 +128,16 @@ def main():
             'Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
             'Product_Lifetime_Appliances', 'Product_Lifetime_Cars'
         ]
-        df_encoded = scale_numeric_columns(df_encoded, numeric_cols_to_scale)
+        scaler_path = Path("scaler/robust_scaler.pkl")
+        scaler_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Flag: True rewrite scaller
+        RETRAIN_SCALER = True
+
+        if RETRAIN_SCALER:
+            df_encoded = fit_and_save_scaler(df_encoded, numeric_cols_to_scale, scaler_path)
+        else:
+            df_encoded = apply_existing_scaler(df_encoded, numeric_cols_to_scale, scaler_path)
 
         print("\n>>> Calculating risk score...")
         df_encoded = calculate_risk_advanced(df_encoded) # Select desired risk calculation method

@@ -7,12 +7,20 @@ from sklearn.metrics import silhouette_score, classification_report
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import RobustScaler
 from xgboost import XGBClassifier
+import joblib
 
-
-# Scale numeric columns using RobustScaler
-def scale_numeric_columns(df, columns):
+#Fitting + save scaler
+def fit_and_save_scaler(df, columns, scaler_path):
     scaler = RobustScaler()
-    df[columns] = scaler.fit_transform(df[columns])
+    scaler.fit(df[columns])
+    joblib.dump(scaler, scaler_path)
+    df[columns] = scaler.transform(df[columns])
+    return df
+
+#Transform using scaler
+def apply_existing_scaler(df, columns, scaler_path):
+    scaler = joblib.load(scaler_path)
+    df[columns] = scaler.transform(df[columns])
     return df
 
 # Basic risk scoring via GMM clustering over weighted feature
