@@ -1,125 +1,172 @@
-#!/usr/bin/env python3
-import os
-import json
-import re
 import pandas as pd
+import numpy as np
+import joblib
+import re
 from pathlib import Path
 from tkinter import Tk, filedialog
+import os
 
-from FirstProcessing.preprocessing import (
-    normalize_and_translate_data,
-    postprocess_data,
-    range_smoothing
-)
-from FirstProcessing.risk_calculation import apply_existing_scaler
-from FirstProcessing.data_generation import random_product_lifetime
-from FirstProcessing.file_operations import save_files
+# Dicționar pentru conversia unităților de timp în luni
+TIME_UNITS = {
+    'months': 1,
+    'month': 1,
+    'years': 12,
+    'year': 12,
+    'ani': 12,
+    'an': 12,
+    'luni': 1
+}
 
-# Pipeline settings
-multi_value_cols = [
-    "Savings_Goal",
-    "Savings_Obstacle",
-    "Expense_Distribution",
-    "Credit_Usage"
-]
-lifetime_cols = [
-    "Product_Lifetime_Clothing",
-    "Product_Lifetime_Tech",
-    "Product_Lifetime_Appliances",
-    "Product_Lifetime_Cars"
-]
-numeric_cols_to_scale = [
-    'Age', 'Income_Category', 'Essential_Needs_Percentage',
-    'Product_Lifetime_Clothing', 'Product_Lifetime_Tech',
-    'Product_Lifetime_Appliances', 'Product_Lifetime_Cars'
-]
-# Paths to saved scaler and dummy schema
-scaler_path = Path("scaler/robust_scaler.pkl")
-dummy_cols_path = Path("scaler/dummy_columns.json")
 
-# Utility: convert 'X years'/'Y months' to float months
+# Conversia coloanelor de durată de viață a produselor
+def convert_lifetime_to_months(value):
+    if pd.isna(value) or value == 'Not purchased yet':
+        return np.nan
 
-def convert_duration_to_months(value):
-    if isinstance(value, str):
-        m = re.match(r"(\d+(?:\.\d+)?)\s*years?", value)
-        if m:
-            return float(m.group(1)) * 12.0
-        m2 = re.match(r"(\d+(?:\.\d+)?)\s*months?", value)
-        if m2:
-            return float(m2.group(1))
-        return 0.0
+    if isinstance(value, (int, float)):
+        return value * 12  # Presupunem că valorile numerice sunt în ani
+
     try:
-        return float(value)
-    except:
-        return 0.0
+        # Încercăm conversia directă pentru șiruri numerice
+        return float(value) * 12
+    except ValueError:
+        pass
+
+    # Procesăm șirurile care conțin unități
+    match = re.search(r'(\d+\.?\d*)\s*([a-zA-Z]+)', str(value))
+    if match:
+        num = float(match.group(1))
+        unit = match.group(2).lower()
+        multiplier = TIME_UNITS.get(unit, 1)
+        return num * multiplier
+
+    return np.nan
 
 
-def main():
-    Tk().withdraw()
-    # 1) Select decoded input (Excel)
-    input_path = filedialog.askopenfilename(
-        title="Select decoded Excel file",
-        filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"),("All files","*.*")]
+# Ordinal encoding mappings
+ORDINAL_MAPPINGS = {
+    'Impulse_Buying_Frequency': {
+        'Very rarely': 1,
+        'Rarely': 2,
+        'Sometimes': 3,
+        'Often': 4,
+        'Very often': 5
+    },
+    'Debt_Level': {
+        'Absent': 1,
+        'Low': 2,
+        'Manageable': 3,
+        'Difficult to manage': 4
+    },
+    'Bank_Account_Analysis_Frequency': {
+        'Rarely or never': 1,
+        'Monthly': 2,
+        'Weekly': 3,
+        'Daily': 4
+    }
+}
+
+
+# Funcția principală de conversie
+def convert_decoded_excel_to_encoded():
+    root = Tk()
+    root.withdraw()
+
+    # Selectare fișier Excel
+    excel_path = filedialog.askopenfilename(
+        title="Selectați fișierul Excel decodat",
+        filetypes=[("Excel files", "*.xlsx")]
     )
-    if not input_path:
-        print("❌ No file selected. Exiting.")
+    if not excel_path:
+        print("Nu a fost selectat niciun fișier.")
         return
 
-    # 2) Load data
     try:
-        if input_path.lower().endswith('.xlsx'):
-            df = pd.read_excel(input_path, engine='openpyxl')
+        # Încărcarea datelor
+        df = pd.read_excel(excel_path, sheet_name='Decoded_Data')
+
+        # 1. Conversia duratei de viață a produselor
+        lifetime_cols = [
+            'Product_Lifetime_Clothing',
+            'Product_Lifetime_Tech',
+            'Product_Lifetime_Appliances',
+            'Product_Lifetime_Cars'
+        ]
+
+        for col in lifetime_cols:
+            df[col] = df[col].apply(convert_lifetime_to_months)
+            # Înlocuire NaN cu mediana
+            median_val = df[col].median()
+            df[col].fillna(median_val, inplace=True)
+            # Rotunjire la întregi
+            df[col] = df[col].round().astype(int)
+
+        # 2. Conversia riscului comportamental
+        df['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].map({
+            'Beneficial': 0,
+            'Risky': 1
+        })
+
+        # 3. Codificare ordinală
+        for col, mapping in ORDINAL_MAPPINGS.items():
+            df[col] = df[col].map(mapping)
+            df[col].fillna(0, inplace=True)
+            df[col] = df[col].astype(int)
+
+        # 4. One-hot encoding
+        nominal_cols = [
+            'Family_Status',
+            'Gender',
+            'Financial_Attitude',
+            'Budget_Planning',
+            'Save_Money',
+            'Impulse_Buying_Category',
+            'Impulse_Buying_Reason',
+            'Financial_Investments'
+        ]
+
+        for col in nominal_cols:
+            dummies = pd.get_dummies(df[col], prefix=col, dummy_na=False)
+            df = pd.concat([df, dummies], axis=1)
+
+        # Eliminăm coloanele nominale originale
+        df.drop(columns=nominal_cols, inplace=True)
+
+        # Eliminăm și coloanele brute de multi-select, dar păstrăm dummies
+        multi_select_raw_cols = [
+            'Savings_Goal',
+            'Savings_Obstacle',
+            'Expense_Distribution',
+            'Credit_Usage'
+        ]
+        df.drop(columns=multi_select_raw_cols, inplace=True, errors='ignore')
+
+        # 5. Scalare numerică
+        numeric_cols = [
+                           'Age',
+                           'Income_Category',
+                           'Essential_Needs_Percentage'
+                       ] + lifetime_cols
+
+        scaler_path = Path("scaler/robust_scaler.pkl")
+        if scaler_path.exists():
+            scaler = joblib.load(scaler_path)
+            df[numeric_cols] = scaler.transform(df[numeric_cols])
         else:
-            df = pd.read_csv(input_path)
+            print(f"Scaler not found at {scaler_path}. Using unscaled data.")
+
+        # 6. Salvarea ca CSV
+        base_name = os.path.splitext(excel_path)[0]
+        csv_path = f"{base_name}_encoded.csv"
+        df.to_csv(csv_path, index=False)
+
+        print(f"Fișierul encoded.csv a fost salvat la: {csv_path}")
+        return csv_path
+
     except Exception as e:
-        print(f"❌ Failed to read file: {e}")
-        return
+        print(f"Eroare la procesare: {str(e)}")
+        return None
 
-    # 3) Normalize & translate textual responses
-    df = normalize_and_translate_data(df)
 
-    # 4) Range smoothing for lifetimes and categories
-    #    Use default (decoded) smoothing to convert strings to numeric
-    df = range_smoothing(
-        df,
-        age_column="Age",
-        income_column="Income_Category",
-        lifetime_columns=lifetime_cols,
-        essential_needs_column="Essential_Needs_Percentage",
-        lifetime_func=random_product_lifetime
-    )
-
-    # 5) Ensure any leftover durations are numeric months
-    for col in lifetime_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(convert_duration_to_months)
-
-    # 6) Post-process: ordinal mappings and one-hot for nominal
-    df = postprocess_data(df)
-    if df is None:
-        print("❌ postprocess_data returned None. Aborting.")
-        return
-
-    # 7) Reindex dummy columns to match training schema
-    if not dummy_cols_path.exists():
-        print(f"❌ Dummy schema not found: {dummy_cols_path}")
-        return
-    with open(dummy_cols_path, 'r') as f:
-        dummy_cols = json.load(f)
-    # Generate full dummies from current df
-    df = pd.get_dummies(df, drop_first=False)
-    # Combine non-dummy and dummy in fixed order
-    non_dummy = [c for c in df.columns if c not in dummy_cols]
-    df = df.reindex(columns=non_dummy + dummy_cols, fill_value=0)
-
-    # 8) Apply existing RobustScaler (no re-fit)
-    if not scaler_path.exists():
-        print(f"❌ Scaler not found at {scaler_path}. Run training pipeline first.")
-        return
-    df = apply_existing_scaler(df, numeric_cols_to_scale, scaler_path)
-
-    # 9) Save results (Excel + CSV)
-    save_files(df)
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    convert_decoded_excel_to_encoded()
