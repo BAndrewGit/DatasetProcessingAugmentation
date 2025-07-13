@@ -18,7 +18,6 @@ TIME_UNITS = {
 }
 
 
-# Conversia coloanelor de durată de viață a produselor
 def convert_lifetime_to_months(value):
     if pd.isna(value) or value == 'Not purchased yet':
         return np.nan
@@ -27,12 +26,10 @@ def convert_lifetime_to_months(value):
         return value * 12  # Presupunem că valorile numerice sunt în ani
 
     try:
-        # Încercăm conversia directă pentru șiruri numerice
         return float(value) * 12
     except ValueError:
         pass
 
-    # Procesăm șirurile care conțin unități
     match = re.search(r'(\d+\.?\d*)\s*([a-zA-Z]+)', str(value))
     if match:
         num = float(match.group(1))
@@ -43,7 +40,6 @@ def convert_lifetime_to_months(value):
     return np.nan
 
 
-# Ordinal encoding mappings
 ORDINAL_MAPPINGS = {
     'Impulse_Buying_Frequency': {
         'Very rarely': 1,
@@ -67,12 +63,10 @@ ORDINAL_MAPPINGS = {
 }
 
 
-# Funcția principală de conversie
 def convert_decoded_excel_to_encoded():
     root = Tk()
     root.withdraw()
 
-    # Selectare fișier Excel
     excel_path = filedialog.askopenfilename(
         title="Selectați fișierul Excel decodat",
         filetypes=[("Excel files", "*.xlsx")]
@@ -82,7 +76,6 @@ def convert_decoded_excel_to_encoded():
         return
 
     try:
-        # Încărcarea datelor
         df = pd.read_excel(excel_path, sheet_name='Decoded_Data')
 
         # 1. Conversia duratei de viață a produselor
@@ -95,10 +88,8 @@ def convert_decoded_excel_to_encoded():
 
         for col in lifetime_cols:
             df[col] = df[col].apply(convert_lifetime_to_months)
-            # Înlocuire NaN cu mediana
             median_val = df[col].median()
             df[col].fillna(median_val, inplace=True)
-            # Rotunjire la întregi
             df[col] = df[col].round().astype(int)
 
         # 2. Conversia riscului comportamental
@@ -113,7 +104,7 @@ def convert_decoded_excel_to_encoded():
             df[col].fillna(0, inplace=True)
             df[col] = df[col].astype(int)
 
-        # 4. One-hot encoding
+        # 4. One-hot encoding doar pentru coloanele nominale existente
         nominal_cols = [
             'Family_Status',
             'Gender',
@@ -129,26 +120,12 @@ def convert_decoded_excel_to_encoded():
             dummies = pd.get_dummies(df[col], prefix=col, dummy_na=False)
             df = pd.concat([df, dummies], axis=1)
 
-        # Eliminăm coloanele nominale originale
         df.drop(columns=nominal_cols, inplace=True)
 
-        # Eliminăm și coloanele brute de multi-select, dar păstrăm dummies
-        multi_select_raw_cols = [
-            'Savings_Goal',
-            'Savings_Obstacle',
-            'Expense_Distribution',
-            'Credit_Usage'
-        ]
-        df.drop(columns=multi_select_raw_cols, inplace=True, errors='ignore')
-
         # 5. Scalare numerică
-        numeric_cols = [
-                           'Age',
-                           'Income_Category',
-                           'Essential_Needs_Percentage'
-                       ] + lifetime_cols
-
+        numeric_cols = ['Age', 'Income_Category', 'Essential_Needs_Percentage'] + lifetime_cols
         scaler_path = Path("scaler/robust_scaler.pkl")
+
         if scaler_path.exists():
             scaler = joblib.load(scaler_path)
             df[numeric_cols] = scaler.transform(df[numeric_cols])

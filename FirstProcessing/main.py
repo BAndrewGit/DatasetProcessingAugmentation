@@ -79,9 +79,12 @@ def main():
 
         # Decoded version (text-based)
         df_decoded = df_norm.copy()
-        encoded_cols = [col for col in df_decoded.columns if col.endswith('_encoded')]
-        if encoded_cols:
-            df_decoded.drop(columns=encoded_cols, inplace=True)
+        for col in multi_value_cols:
+            if col not in df_decoded.columns:
+                if col in df_norm.columns:
+                    df_decoded[col] = df_norm[col]
+                else:
+                    df_decoded[col] = pd.NA
 
         df_decoded = range_smoothing(
             df_decoded,

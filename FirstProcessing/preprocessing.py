@@ -159,20 +159,23 @@ def normalize_and_translate_data(df):
         df[col] = df[col].apply(lambda x: str(x) if pd.notnull(x) else "")
         df[col] = df[col].str.replace(r', (?=[A-ZĂÎȘȚÂ])', '; ', regex=True).str.strip()
 
-        def translate_text(cell):
-            if cell == "":
-                return cell
-            return '; '.join(translations.get(part.strip(), part.strip()) for part in cell.split('; '))
-        df[col] = df[col].apply(translate_text)
+        df[col] = df[col].apply(
+            lambda cell: '; '.join(
+                translations.get(part.strip(), part.strip()) for part in cell.split('; ')
+            ) if cell else cell
+        )
 
-        options = list(translations.values())
-        df[col] = df[col].astype(str).str.split(r';\s*')
+        col_text = df[col].copy()
+        df[col] = df[col].str.split(r';\s*')
 
-        for option in options:
-            new_col = f"{col}_{option}"
-            df[new_col] = df[col].apply(lambda x: int(option in x if isinstance(x, list) else []))
+        for option in translations.values():
+            dummy_col = f"{col}_{option}"
+            df[dummy_col] = df[col].apply(
+                lambda lst: int(option in lst if isinstance(lst, list) else 0)
+            )
 
-        df.drop(columns=[col], inplace=True)
+        df[col] = col_text
+
 
     return df
 
