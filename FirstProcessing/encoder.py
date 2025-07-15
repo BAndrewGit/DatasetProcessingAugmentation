@@ -90,7 +90,7 @@ def convert_decoded_excel_to_encoded():
             df[col] = df[col].apply(convert_lifetime_to_months)
             median_val = df[col].median()
             df[col].fillna(median_val, inplace=True)
-            df[col] = df[col].round().astype(int)
+            df[col] = df[col].astype(float)
 
         # 2. Conversia riscului comportamental
         df['Behavior_Risk_Level'] = df['Behavior_Risk_Level'].map({
@@ -121,6 +121,34 @@ def convert_decoded_excel_to_encoded():
             df = pd.concat([df, dummies], axis=1)
 
         df.drop(columns=nominal_cols, inplace=True)
+
+        # 4b. One-hot pentru coloanele multi-select
+        MULTI_VAL_MAP = {
+            "Savings_Goal": [
+                "Major_Purchases", "Retirement", "Emergency_Fund", "Child_Education", "Vacation", "Other"
+            ],
+            "Savings_Obstacle": [
+                "Insufficient_Income", "Other_Expenses", "Not_Priority", "Other"
+            ],
+            "Expense_Distribution": [
+                "Food", "Housing", "Transport", "Entertainment", "Health",
+                "Personal_Care", "Child_Education", "Other"
+            ],
+            "Credit_Usage": [
+                "Essential_Needs", "Major_Purchases", "Unexpected_Expenses", "Personal_Needs", "Never_Used"
+            ]
+        }
+
+        for col, options in MULTI_VAL_MAP.items():
+            if col not in df.columns:
+                continue
+            df[col] = df[col].astype(str).str.split(r';\s*')
+            for option in options:
+                dummy_col = f"{col}_{option}"
+                df[dummy_col] = df[col].apply(lambda x: int(option in x if isinstance(x, list) else 0))
+
+        # Șterge coloanele text
+        df.drop(columns=list(MULTI_VAL_MAP.keys()), inplace=True)
 
         # 5. Scalare numerică
         numeric_cols = ['Age', 'Income_Category', 'Essential_Needs_Percentage'] + lifetime_cols
