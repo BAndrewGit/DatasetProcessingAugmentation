@@ -201,14 +201,22 @@ def postprocess_data(df):
 
         # One-hot encode categorical nominal values
         nominal_cols = [
-            'Family_Status', 'Gender', 'Financial_Attitude', 'Budget_Planning',
-            'Save_Money', 'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Financial_Investments', 'Savings_Obstacle'
+            'Family_Status', 'Financial_Attitude', 'Budget_Planning',
+            'Impulse_Buying_Category', 'Impulse_Buying_Reason', 'Financial_Investments', 'Savings_Obstacle'
         ]
         for col in nominal_cols:
             if col in df.columns:
                 dummies = pd.get_dummies(df[col], prefix=col).astype(int)
                 df = pd.concat([df, dummies], axis=1)
                 df.drop(columns=[col], inplace=True)
+
+        # Encoding binar pentru Gender (0 = Female, 1 = Male)
+        if 'Gender' in df.columns:
+            df['Gender'] = df['Gender'].map({'Female': 0, 'Male': 1, 'Prefer not to say': 0}).fillna(0).astype(int)
+
+        # Encoding binar pentru Save_Money (0 = No, 1 = Yes)
+        if 'Save_Money' in df.columns:
+            df['Save_Money'] = df['Save_Money'].map({'No': 0, 'Yes': 1}).fillna(0).astype(int)
 
         # Ensure numeric types on key columns
         lifetime_cols = [

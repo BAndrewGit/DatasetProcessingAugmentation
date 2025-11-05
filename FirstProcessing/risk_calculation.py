@@ -85,7 +85,7 @@ def calculate_risk_clusters(df, cluster_range=(2, 8)):
     return df
 
 # Advanced multi-stage risk labeling: outliers + clustering + iterative ML
-def calculate_risk_advanced(df, gmm_clusters=4, confidence_threshold=0.95, iterations=4):
+def calculate_risk_advanced(df, gmm_clusters=3, confidence_threshold=0.9, iterations=2):
     config = {
         'weights': {
             'Debt_Level': 0.25,
@@ -129,7 +129,19 @@ def calculate_risk_advanced(df, gmm_clusters=4, confidence_threshold=0.95, itera
     df['Behavior_Risk_Level'] = -1
 
     features = df.columns.difference(['Behavior_Risk_Level', 'Confidence', 'Auto_Label'])
-    xgb = XGBClassifier(scale_pos_weight=1.5, max_depth=4, subsample=0.8, eval_metric='logloss', random_state=42)
+    xgb = XGBClassifier(
+        scale_pos_weight=1.5,
+        max_depth=3,
+        subsample=0.7,
+        colsample_bytree=0.7,
+        min_child_weight=3,
+        learning_rate=0.05,
+        n_estimators=100,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        eval_metric='logloss',
+        random_state=42
+    )
 
     # Iteratively refine high-confidence labels using XGBoost + SHAP
     for iteration in range(iterations):
@@ -210,3 +222,22 @@ def calculate_risk_advanced(df, gmm_clusters=4, confidence_threshold=0.95, itera
         print("No labeled data available for final scoring.")
 
     return df
+
+
+def scale_numeric_columns(df, columns, scaler_path=None, fit=True):
+
+    if fit:
+        if scaler_path:
+            # Fit and save scaler for later reuse
+            return fit_and_save_scaler(df, columns, scaler_path)
+        else:
+            # Fit but don't save
+            scaler = RobustScaler()
+            df = df.copy()
+            df[columns] = scaler.fit_transform(df[columns])
+            return df
+    else:
+        if not scaler_path:
+            raise ValueError("scaler_path required when fit=False")
+        # Load and apply existing scaler
+        return apply_existing_scaler(df, columns, scaler_path)
