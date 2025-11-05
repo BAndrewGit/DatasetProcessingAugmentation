@@ -1,4 +1,6 @@
 import os
+# Limit parallel processing CPU usage
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
 # Grupuri de coloane pentru analiză
 GROUP_MAP = {
@@ -18,8 +20,9 @@ COLUMNS_TO_DROP = ['Confidence', 'Cluster', 'Auto_Label', 'Outlier', 'Behavior_R
 TARGET = "Risk_Score"
 
 # Subfolders pentru ploturi
-PLOT_SUBFOLDERS = ["univariate", "bivariate", "vs_target", "pca"]
+PLOT_SUBFOLDERS = ["univariate", "bivariate", "vs_target", "pca", "clustering"]
 PCA_VARIANCE_THRESHOLD = 0.80
+CLUSTERING_K_RANGE = (2, 11)
 
 # Plot settings
 DPI = 300

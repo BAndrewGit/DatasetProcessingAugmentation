@@ -44,29 +44,36 @@ def plot_scree(pca_full, cumulative_variance, n_components, variance_threshold, 
 
 
 def plot_loadings_heatmap(loadings_df, save_dir, n_show=10):
-    """Generate heatmap of PCA loadings."""
-    n_show = min(n_show, loadings_df.shape[1])
+    """Plot heatmap of PCA loadings for top contributors."""
+    # Select top N features by absolute loading on PC1
+    top_features = loadings_df.abs()['PC1'].nlargest(n_show).index
+    loadings_subset = loadings_df.loc[top_features]
 
-    fig, ax = plt.subplots(figsize=(12, max(8, len(loadings_df) * 0.3)))
+    # Dynamic figure size based on number of features and components
+    n_features = len(top_features)
+    n_components = loadings_df.shape[1]
+    fig_width = max(12, n_components * 1.5)  # Minimum 12, grows with components
+    fig_height = max(8, n_features * 0.6)  # Minimum 8, grows with features
 
-    short_names = [name[:30] + '...' if len(name) > 30 else name
-                   for name in loadings_df.index]
-    loadings_plot = loadings_df.iloc[:, :n_show].copy()
-    loadings_plot.index = short_names
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
-    sns.heatmap(loadings_plot, annot=False, cmap="RdBu_r",
-                center=0, cbar_kws={"shrink": 0.8}, ax=ax)
-    ax.set_title(f'PCA Loadings Heatmap (Top {n_show} Components)',
-                 fontsize=14, pad=15)
-    ax.set_xlabel('Principal Components', fontsize=11)
-    ax.set_ylabel('Features', fontsize=11)
-    plt.xticks(rotation=0)
-    plt.yticks(rotation=0, fontsize=8)
+    sns.heatmap(loadings_subset, annot=True, fmt=".2f", cmap="coolwarm",
+                center=0, cbar_kws={'label': 'Loading'},
+                annot_kws={"size": 9}, ax=ax, linewidths=0.5)
+
+    ax.set_title(f'PCA Loadings - Top {n_show} Features', fontsize=14, pad=15)
+    ax.set_xlabel('Principal Components', fontsize=12)
+    ax.set_ylabel('Features', fontsize=12)
+
+    # Improve label readability
+    plt.xticks(rotation=0, fontsize=10)
+    plt.yticks(rotation=0, fontsize=10, ha='right')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "loadings_heatmap.png"),
+    plt.savefig(os.path.join(save_dir, "pca_loadings_heatmap.png"),
                 dpi=DPI, bbox_inches='tight')
     plt.close()
-    print("- Loadings heatmap saved")
+    print("- PCA loadings heatmap saved")
 
 
 def save_pca_results(loadings_df, pca_df, save_dir):
