@@ -7,7 +7,10 @@ from .cluster_comparison import (compare_clustering_methods,
 from .cluster_visualizer import (plot_silhouette_scores,
                                 plot_pca_clusters,
                                 plot_risk_score_by_cluster,
-                                plot_cluster_comparison_summary)
+                                plot_cluster_comparison_summary,
+                                save_cluster_comparison_table,
+                                plot_parallel_coordinates,
+                                plot_radar_chart)
 
 __all__ = [
     'run_kmeans_range',
@@ -21,5 +24,9 @@ __all__ = [
     'plot_silhouette_scores',
     'plot_pca_clusters',
     'plot_risk_score_by_cluster',
-    'plot_cluster_comparison_summary'
+    'plot_cluster_comparison_summary',
+    'save_cluster_comparison_table',
+    'plot_parallel_coordinates',
+    'plot_radar_chart'
 ]
+

@@ -12,7 +12,10 @@ from clustering import (run_kmeans_range, find_optimal_k, save_optimal_kmeans_da
                        compare_clustering_methods, compare_risk_score_distribution,
                        save_clustering_summary,
                        plot_silhouette_scores, plot_pca_clusters,
-                       plot_risk_score_by_cluster, plot_cluster_comparison_summary)
+                       plot_risk_score_by_cluster, plot_cluster_comparison_summary,
+                       save_cluster_comparison_table, plot_parallel_coordinates,
+                       plot_radar_chart)
+
 from config import PCA_VARIANCE_THRESHOLD, CLUSTERING_K_RANGE
 
 
@@ -52,7 +55,7 @@ def run_pca_analysis(df, plots_dir):
     return pca_results, X_pca, pca_df
 
 
-def run_clustering_analysis(df, X_pca, plots_dir):
+def run_clustering_analysis(df, X_pca, pca_results, plots_dir):
     """Run clustering analysis with K-Means and GMM."""
     print("\n=== Starting Clustering Analysis ===")
     cluster_dir = os.path.join(plots_dir, "clustering")
@@ -89,10 +92,20 @@ def run_clustering_analysis(df, X_pca, plots_dir):
                                    gmm_results['silhouette'],
                                    cluster_dir)
 
+    print("\n--- Generating Comparison Table and Charts ---")
+    comparison_df = save_cluster_comparison_table(df, kmeans_labels,
+                                                  gmm_results['labels'],
+                                                  pca_results['feature_cols'],
+                                                  cluster_dir)
+    plot_parallel_coordinates(df, kmeans_labels, gmm_results['labels'],
+                              pca_results['feature_cols'], cluster_dir)
+    plot_radar_chart(comparison_df, cluster_dir)
+
     print(f"\nK-Means Silhouette: {kmeans_results[k_optimal]['silhouette']:.4f}")
     print(f"GMM Silhouette: {gmm_results['silhouette']:.4f}")
 
     return kmeans_results, gmm_results, k_optimal
+
 
 
 def main():
@@ -105,13 +118,14 @@ def main():
     run_eda_plots(df, group_map, plots_dir)
     pca_results, X_pca, pca_df = run_pca_analysis(df, plots_dir)
     kmeans_results, gmm_results, k_optimal = run_clustering_analysis(
-        df, X_pca, plots_dir
+        df, X_pca, pca_results, plots_dir
     )
 
     print(f"\n=== Analysis Complete ===")
     print(f"All results saved to: {plots_dir}")
     print(f"PCA components: {pca_results['n_components']}")
     print(f"Optimal clusters: {k_optimal}")
+
 
 
 if __name__ == "__main__":
