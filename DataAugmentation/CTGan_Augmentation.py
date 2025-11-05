@@ -10,8 +10,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import cohen_kappa_score, f1_score
 from scipy.spatial.distance import cosine
 from FirstProcessing.risk_calculation import calculate_risk_advanced
-from EDA.data_loading import load_data
-from EDA.file_operations import select_save_directory
+from EDA.V1.data_loading import load_data
+from EDA.V1.file_operations import select_save_directory
 from FirstProcessing.file_operations import auto_adjust_column_width
 
 class CTGANAugmentation:

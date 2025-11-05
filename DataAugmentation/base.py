@@ -1,13 +1,9 @@
 import pandas as pd
-import numpy as np
 import os
 import json
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-from EDA.data_loading import load_data
-from EDA.file_operations import select_save_directory, save_metrics, save_plot
-from EDA.visualization import visualize_data
-from EDA.model_training import evaluate_overfitting
+from EDA.V1.data_loading import load_data
+from EDA.V1.visualization import visualize_data
+from EDA.V1.model_training import evaluate_overfitting
 from FirstProcessing.risk_calculation import scale_numeric_columns
 from FirstProcessing.file_operations import auto_adjust_column_width
 

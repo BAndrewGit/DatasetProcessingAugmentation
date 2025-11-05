@@ -172,6 +172,9 @@ def main():
             print("No save location selected for Excel.")
             return
 
+        auxiliary_cols = ['Confidence', 'Cluster', 'Auto_Label', 'Outlier']
+        df_encoded_export = df_encoded.drop(columns=auxiliary_cols, errors='ignore')
+
         with pd.ExcelWriter(excel_save_path, engine='openpyxl') as writer:
             df_decoded.to_excel(writer, index=False, sheet_name='Decoded_Data')
             auto_adjust_column_width(writer, 'Decoded_Data')
@@ -180,7 +183,7 @@ def main():
         # Save encoded CSV
         base_name, _ = os.path.splitext(excel_save_path)
         csv_save_path = base_name + "_encoded.csv"
-        df_encoded.to_csv(csv_save_path, index=False, encoding='utf-8')
+        df_encoded_export.to_csv(csv_save_path, index=False, encoding='utf-8')
         print(f"Encoded CSV file saved at: {csv_save_path}")
 
         print("\nProcessing complete!")

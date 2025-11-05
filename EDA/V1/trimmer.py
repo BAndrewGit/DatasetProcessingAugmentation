@@ -1,6 +1,6 @@
 import pandas as pd
-from EDA.data_loading import load_data
-from EDA.file_operations import select_save_directory
+from EDA.V1.data_loading import load_data
+from EDA.V1.file_operations import select_save_directory
 from FirstProcessing.file_operations import auto_adjust_column_width
 import os
 

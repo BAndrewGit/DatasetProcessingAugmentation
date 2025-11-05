@@ -1,10 +1,10 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from EDA.data_loading import load_data
-from EDA.preprocessing import preprocess_encoded_data
-from EDA.model_training import train_models, evaluate_overfitting, drop_artificial_features
-from EDA.visualization import visualize_data
-from EDA.file_operations import save_metrics
+from EDA.V1.data_loading import load_data
+from EDA.V1.preprocessing import preprocess_encoded_data
+from EDA.V1.model_training import train_models, evaluate_overfitting, drop_artificial_features
+from EDA.V1.visualization import visualize_data
+from EDA.V1.file_operations import save_metrics
 
 def remove_exact_duplicates(train_df, test_df):
     print(f"Train before removing duplicates: {len(train_df)}")

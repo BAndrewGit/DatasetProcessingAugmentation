@@ -5,13 +5,13 @@ from sklearn.ensemble import IsolationForest
 from sklearn.mixture import BayesianGaussianMixture
 from sklearn.metrics import silhouette_score, classification_report
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 from xgboost import XGBClassifier
 import joblib
 
 #Fitting + save scaler
 def fit_and_save_scaler(df, columns, scaler_path):
-    scaler = RobustScaler()
+    scaler = StandardScaler()
     scaler.fit(df[columns])
     joblib.dump(scaler, scaler_path)
     df[columns] = scaler.transform(df[columns])
@@ -225,19 +225,15 @@ def calculate_risk_advanced(df, gmm_clusters=3, confidence_threshold=0.9, iterat
 
 
 def scale_numeric_columns(df, columns, scaler_path=None, fit=True):
-
     if fit:
         if scaler_path:
-            # Fit and save scaler for later reuse
             return fit_and_save_scaler(df, columns, scaler_path)
         else:
-            # Fit but don't save
-            scaler = RobustScaler()
+            scaler = StandardScaler()
             df = df.copy()
             df[columns] = scaler.fit_transform(df[columns])
             return df
     else:
         if not scaler_path:
             raise ValueError("scaler_path required when fit=False")
-        # Load and apply existing scaler
         return apply_existing_scaler(df, columns, scaler_path)
