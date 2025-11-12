@@ -229,7 +229,7 @@ TARGET = "Risk_Score"              # Target variable
 - Small datasets (<500 samples)
 - Pre-processing for WGAN
 
-**Output:** `augmented_dataset_encoded.csv` / `.xlsx`
+**Output:** `augmented_dataset_encoded.csv`
 
 ---
 
