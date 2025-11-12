@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
+import os
 from sklearn.metrics import adjusted_rand_score
 
-
+#Compare K-Means and GMM clustering results
 def compare_clustering_methods(kmeans_labels, gmm_labels):
-    """Compare K-Means and GMM clustering results."""
     ari = adjusted_rand_score(kmeans_labels, gmm_labels)
     crosstab = pd.crosstab(
         pd.Series(kmeans_labels, name='K-Means'),
@@ -24,9 +24,8 @@ def compare_clustering_methods(kmeans_labels, gmm_labels):
 
     return results
 
-
+# Analyze Risk_Score distribution across clusters for both methods
 def compare_risk_score_distribution(df_kmeans, df_gmm, target='Risk_Score'):
-    """Compare Risk_Score distribution across clusters."""
     kmeans_stats = df_kmeans.groupby('cluster_kmeans')[target].agg([
         'count', 'mean', 'std', 'min', 'median', 'max'
     ]).round(3)
@@ -49,10 +48,7 @@ def compare_risk_score_distribution(df_kmeans, df_gmm, target='Risk_Score'):
 
 def save_clustering_summary(kmeans_results, gmm_results, comparison,
                             risk_stats, k_optimal, save_dir):
-    """Save comprehensive clustering summary."""
-    import os
 
-    # Main summary
     summary_data = {
         'Metric': [
             'Optimal K',

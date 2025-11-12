@@ -7,12 +7,10 @@ from config import DPI
 
 sns.set_theme(style="whitegrid")
 
-
+#scree plot with individual and cumulative variance
 def plot_scree(pca_full, cumulative_variance, n_components, variance_threshold, save_dir):
-    """Generate scree plot with individual and cumulative variance."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Individual variance
     ax1.bar(range(1, len(pca_full.explained_variance_ratio_) + 1),
             pca_full.explained_variance_ratio_,
             alpha=0.7, color='steelblue')
@@ -21,7 +19,6 @@ def plot_scree(pca_full, cumulative_variance, n_components, variance_threshold, 
     ax1.set_title('Scree Plot - Individual Variance', fontsize=13, pad=10)
     ax1.grid(alpha=0.3)
 
-    # Cumulative variance
     ax2.plot(range(1, len(cumulative_variance) + 1),
              cumulative_variance, marker='o', linestyle='-',
              color='darkgreen', linewidth=2, markersize=5)
@@ -42,14 +39,12 @@ def plot_scree(pca_full, cumulative_variance, n_components, variance_threshold, 
     plt.close()
     print("- Scree plot saved")
 
-
+# heatmap of PCA loadings for top N features
 def plot_loadings_heatmap(loadings_df, save_dir, n_show=10):
-    """Plot heatmap of PCA loadings for top contributors."""
-    # Select top N features by absolute loading on PC1
+
     top_features = loadings_df.abs()['PC1'].nlargest(n_show).index
     loadings_subset = loadings_df.loc[top_features]
 
-    # Dynamic figure size based on number of features and components
     n_features = len(top_features)
     n_components = loadings_df.shape[1]
     fig_width = max(12, n_components * 1.5)  # Minimum 12, grows with components
@@ -65,7 +60,6 @@ def plot_loadings_heatmap(loadings_df, save_dir, n_show=10):
     ax.set_xlabel('Principal Components', fontsize=12)
     ax.set_ylabel('Features', fontsize=12)
 
-    # Improve label readability
     plt.xticks(rotation=0, fontsize=10)
     plt.yticks(rotation=0, fontsize=10, ha='right')
 
@@ -77,7 +71,6 @@ def plot_loadings_heatmap(loadings_df, save_dir, n_show=10):
 
 
 def save_pca_results(loadings_df, pca_df, save_dir):
-    """Save loadings and transformed data to CSV."""
     loadings_df.to_csv(os.path.join(save_dir, "pca_loadings.csv"))
     pca_df.to_csv(os.path.join(save_dir, "pca_transformed_data.csv"))
     print(f"- Results saved to: {save_dir}")

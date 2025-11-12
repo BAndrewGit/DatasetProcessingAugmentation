@@ -5,12 +5,6 @@ from sklearn.metrics import silhouette_score
 
 
 def run_gmm(X, n_components):
-    """
-    Run Gaussian Mixture Model clustering.
-
-    Returns:
-        dict with GMM results
-    """
     gmm = GaussianMixture(n_components=n_components,
                           random_state=42,
                           covariance_type='full')
@@ -38,13 +32,11 @@ def run_gmm(X, n_components):
 
 
 def save_optimal_gmm_dataset(df, labels, probabilities, save_dir):
-    """Save dataset with optimal GMM cluster labels and probabilities."""
     import os
 
     df_with_clusters = df.copy()
     df_with_clusters['cluster_gmm'] = labels
 
-    # Add max probability as confidence score
     df_with_clusters['cluster_confidence'] = probabilities.max(axis=1)
 
     output_path = os.path.join(save_dir, "dataset_with_gmm_clusters.csv")

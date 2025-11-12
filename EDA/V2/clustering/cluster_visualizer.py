@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from math import pi
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -7,9 +8,8 @@ from config import DPI
 
 sns.set_theme(style="whitegrid")
 
-
+# Visualizations for clustering results
 def plot_silhouette_scores(kmeans_results, save_dir):
-    """Plot silhouette scores for different K values."""
     k_values = sorted(kmeans_results.keys())
     silhouette_scores = [kmeans_results[k]['silhouette'] for k in k_values]
 
@@ -35,9 +35,8 @@ def plot_silhouette_scores(kmeans_results, save_dir):
     plt.close()
     print("- Silhouette scores plot saved")
 
-
+# Cluster plots in PCA space
 def plot_pca_clusters(X_pca, kmeans_labels, gmm_labels, save_dir):
-    """Plot clusters in 2D PCA space for both methods."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
     # K-Means
@@ -66,7 +65,6 @@ def plot_pca_clusters(X_pca, kmeans_labels, gmm_labels, save_dir):
 
 
 def plot_risk_score_by_cluster(df_kmeans, df_gmm, save_dir, target='Risk_Score'):
-    """Plot Risk_Score distribution by cluster for both methods."""
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
 
     # K-Means - Box plot
@@ -125,7 +123,6 @@ def plot_risk_score_by_cluster(df_kmeans, df_gmm, save_dir, target='Risk_Score')
 
 
 def plot_cluster_comparison_summary(comparison, kmeans_silhouette, gmm_silhouette, save_dir):
-    """Plot comprehensive comparison summary."""
     fig = plt.figure(figsize=(14, 8))
     gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
 
@@ -175,10 +172,8 @@ def plot_cluster_comparison_summary(comparison, kmeans_silhouette, gmm_silhouett
 
 
 def plot_parallel_coordinates(df, kmeans_labels, gmm_labels, feature_cols, save_dir, n_features=8):
-    """Creează parallel coordinates plot pentru compararea clusterelor."""
     from pandas.plotting import parallel_coordinates
 
-    # Selectează primele n_features pentru lizibilitate
     selected_features = feature_cols[:n_features]
 
     # K-Means
@@ -207,15 +202,11 @@ def plot_parallel_coordinates(df, kmeans_labels, gmm_labels, feature_cols, save_
     plt.close()
     print("- Parallel coordinates plot saved")
 
-
+# Radar chart for cluster means comparison
 def plot_radar_chart(comparison_df, save_dir, n_features=8):
-    """Creează radar chart pentru compararea medie clusterelor."""
-    from math import pi
 
-    # Normalizează datele pentru vizualizare
     normalized_df = (comparison_df - comparison_df.min()) / (comparison_df.max() - comparison_df.min())
 
-    # Selectează primele n_features
     selected_cols = normalized_df.columns[:n_features]
     categories = list(selected_cols)
     N = len(categories)
@@ -247,23 +238,18 @@ def plot_radar_chart(comparison_df, save_dir, n_features=8):
     print("- Radar chart saved")
 
 def save_cluster_comparison_table(df, kmeans_labels, gmm_labels, feature_cols, save_dir):
-    """Salvează tabel comparativ cu medii per cluster pentru ambele metode."""
     df_temp = df.copy()
     df_temp['KMeans_Cluster'] = kmeans_labels
     df_temp['GMM_Cluster'] = gmm_labels
 
-    # Medii K-Means
     kmeans_means = df_temp.groupby('KMeans_Cluster')[feature_cols].mean()
     kmeans_means.index = [f'KMeans_C{i}' for i in kmeans_means.index]
 
-    # Medii GMM
     gmm_means = df_temp.groupby('GMM_Cluster')[feature_cols].mean()
     gmm_means.index = [f'GMM_C{i}' for i in gmm_means.index]
 
-    # Combină
     comparison_df = pd.concat([kmeans_means, gmm_means])
 
-    # Salvează
     comparison_path = os.path.join(save_dir, "cluster_comparison_means.csv")
     comparison_df.to_csv(comparison_path)
     print(f"- Cluster comparison table saved to: {comparison_path}")

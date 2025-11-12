@@ -39,12 +39,10 @@ def fit_pca(df, variance_threshold=0.80):
 
 
 def transform_pca(X_scaled, pca_model):
-    """Transform data to PCA space."""
     return pca_model.transform(X_scaled)
 
 
 def get_loadings(pca_model, feature_cols):
-    """Extract PCA loadings as DataFrame."""
     return pd.DataFrame(
         pca_model.components_.T,
         columns=[f'PC{i + 1}' for i in range(pca_model.n_components_)],

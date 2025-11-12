@@ -1,16 +1,12 @@
 import numpy as np
+import os
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
-
+# Run K-Means clustering over a range of K values
 def run_kmeans_range(X, k_range=(2, 11)):
-    """
-    Run K-Means for multiple K values.
 
-    Returns:
-        dict with results for each K
-    """
     results = {}
 
     for k in range(k_range[0], k_range[1]):
@@ -33,12 +29,7 @@ def run_kmeans_range(X, k_range=(2, 11)):
 
 
 def find_optimal_k(results, method='silhouette'):
-    """
-    Determine optimal K using silhouette score or elbow method.
 
-    Returns:
-        optimal K value
-    """
     if method == 'silhouette':
         k_optimal = max(results.keys(),
                         key=lambda k: results[k]['silhouette'])
@@ -54,8 +45,6 @@ def find_optimal_k(results, method='silhouette'):
 
 
 def save_optimal_kmeans_dataset(df, labels, save_dir):
-    """Save dataset with optimal K-Means cluster labels."""
-    import os
 
     df_with_clusters = df.copy()
     df_with_clusters['cluster_kmeans'] = labels
