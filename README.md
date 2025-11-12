@@ -416,7 +416,7 @@ See `requirements.txt` for complete list.
 - `clustering_summary.txt` - Metrics and statistics
 
 ### Data Augmentation
-- `augmented_dataset_encoded.csv` / `.xlsx` - Synthetic dataset
+- `augmented_dataset_encoded.csv` - Synthetic dataset
 - `augmentation_metrics.json` - Quality metrics per iteration
 
 ---
